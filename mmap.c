@@ -36,7 +36,7 @@ static VALUE mm_cMap;
 typedef struct {
     MMAP_RETTYPE addr;
     int smode, pmode, vscope;
-    int advice, frozen;
+    int advice, frozen, lock;
     size_t len, real;
     size_t size;
     off_t offset;
@@ -49,11 +49,13 @@ mm_free(t_mm)
 {
     if (t_mm->path) {
 	munmap(t_mm->addr, t_mm->len);
-	if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
-	    truncate(t_mm->path, t_mm->real) == -1) {
-            rb_raise(rb_eTypeError, "truncate");
+	if (t_mm->path != (char *)-1) {
+	    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
+		truncate(t_mm->path, t_mm->real) == -1) {
+		rb_raise(rb_eTypeError, "truncate");
+	    }
+	    free(t_mm->path);
 	}
-	free(t_mm->path);
     }
     free(t_mm);
 }
@@ -84,11 +86,13 @@ mm_unmap(obj)
     GetMmap(obj, t_mm, 0);
     if (t_mm->path) {
 	munmap(t_mm->addr, t_mm->len);
-	if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
-	    truncate(t_mm->path, t_mm->real) == -1) {
-            rb_raise(rb_eTypeError, "truncate");
+	if (t_mm->path != (char *)-1) {
+	    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
+		truncate(t_mm->path, t_mm->real) == -1) {
+		rb_raise(rb_eTypeError, "truncate");
+	    }
+	    free(t_mm->path);
 	}
-	free(t_mm->path);
 	t_mm->path = '\0';
     }
     return Qnil;
@@ -119,17 +123,17 @@ mm_str(obj, modify)
     else {
 	ret = rb_str_new2("");
     }
+    if (modify & MM_MODIFY) {
+	if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
+	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
+	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
+    }
     if (t_mm->frozen & MM_FROZEN) ret = rb_obj_freeze(ret);
     free(RSTRING(ret)->ptr);
     RSTRING(ret)->ptr = t_mm->addr;
     RSTRING(ret)->len = t_mm->real;
     if (modify & MM_ORIGIN)
 	RSTRING(ret)->orig = ret;
-    if (modify & MM_MODIFY) {
-	if (OBJ_FROZEN(ret)) rb_error_frozen("mmap");
-	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
-	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
-    }
     return ret;
 }
 
@@ -156,21 +160,21 @@ mm_i_options(arg, obj)
     key = rb_obj_as_string(key);
     options = RSTRING(key)->ptr;
     if (strcmp(options, "length") == 0) {
-	t_mm->size == NUM2INT(value);
+	t_mm->size = NUM2INT(value);
 	if (t_mm->size <= 0) {
 	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->size);
 	}
 	t_mm->frozen |= MM_FIXED;
     }
     else if (strcmp(options, "offset") == 0) {
-	t_mm->offset == NUM2INT(value);
+	t_mm->offset = NUM2INT(value);
 	if (t_mm->offset < 0) {
 	    rb_raise(rb_eArgError, "Invalid value for offset %d", t_mm->offset);
 	}
 	t_mm->frozen |= MM_FIXED;
     }
     else if (strcmp(options, "advice") == 0) {
-	t_mm->advice == NUM2INT(value);
+	t_mm->advice = NUM2INT(value);
     }
     return Qnil;
 }
@@ -195,8 +199,26 @@ mm_map(argc, argv, obj)
 	argc--;
     }
     rb_scan_args(argc, argv, "12", &fname, &vmode, &scope);
+    vscope = 0;
+#ifdef MAP_ANON
+    if (NIL_P(fname)) {
+	vscope = MAP_ANON;
+	path = 0;
+    }
+    else {
+	Check_SafeStr(fname);
+	path = RSTRING(fname)->ptr;
+	if (!NIL_P(scope)) {
+	    vscope = NUM2INT(scope);
+	    if (vscope & MAP_ANON) {
+		rb_raise(rb_eArgError, "filename specified for an anonymous map");
+	    }
+	}
+    }
+#else
     Check_SafeStr(fname);
     path = RSTRING(fname)->ptr;
+#endif
     mode = NIL_P(vmode) ? "r" : STR2CSTR(vmode);
     if (strcmp(mode, "r") == 0) {
 	smode = O_RDONLY;
@@ -213,27 +235,42 @@ mm_map(argc, argv, obj)
     else {
 	rb_raise(rb_eArgError, "Invalid mode %s", mode);
     }
-    vscope = NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
-    if ((fd = open(path, smode)) == -1) {
-	rb_raise(rb_eArgError, "Can't open %s", path);
+    vscope |= NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
+    size = 0;
+    if (path) {
+	if ((fd = open(path, smode)) == -1) {
+	    rb_raise(rb_eArgError, "Can't open %s", path);
+	}
+	if (fstat(fd, &st) == -1) {
+	    rb_raise(rb_eArgError, "Can't stat %s", path);
+	}
+	size = st.st_size;
     }
-    if (fstat(fd, &st) == -1) {
-	rb_raise(rb_eArgError, "Can't stat %s", path);
+    else {
+	fd = -1;
     }
-    res = Data_Make_Struct(mm_cMap, mm_mmap, 0, mm_free, t_mm);
-    size = st.st_size;
+    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
     offset = 0;
     if (options != Qnil) {
 	rb_iterate(rb_each, options, mm_i_options, res);
 	if ((t_mm->size + t_mm->offset) > st.st_size) {
-	    rb_raise(rb_eArgError, "invalid value for size (%d) or offset (%d)",
+	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
 		     t_mm->size, t_mm->offset);
 	}
 	if (t_mm->size) size = t_mm->size;
 	offset = t_mm->offset;
     }
+    if (!path) {
+	if (size <= 0) {
+	    rb_raise(rb_eArgError, "length not specified for an anonymous map");
+	}
+	if (offset) {
+	    rb_warning("Ignoring offset for an anonymous map");
+	    offset = 0;
+	}
+    }
     addr = mmap(0, size, pmode, vscope, fd, offset);
-    close(fd);
+    if (fd != -1) close(fd);
     if (addr == MAP_FAILED || !addr) {
 	rb_raise(rb_eArgError, "mmap failed (%x)", addr);
     }
@@ -245,7 +282,7 @@ mm_map(argc, argv, obj)
     t_mm->pmode = pmode;
     t_mm->vscope = vscope;
     t_mm->smode = smode;
-    t_mm->path = ruby_strdup(path);
+    t_mm->path = (path)?ruby_strdup(path):(char *)-1;
     if (smode == O_RDONLY) {
 	res = rb_obj_freeze(res);
 	t_mm->frozen |= MM_FROZEN;
@@ -287,13 +324,16 @@ mm_expandf(t_mm, len)
 	rb_raise(rb_eIOError, "Can't truncate %s", t_mm->path);
     }
     t_mm->addr = mmap(0, len, t_mm->pmode, t_mm->vscope, fd, t_mm->offset);
+    close(fd);
     if (t_mm->addr == MAP_FAILED) {
 	rb_raise(rb_eArgError, "mmap failed");
     }
     if (t_mm->advice && madvise(t_mm->addr, len, t_mm->advice) == -1) {
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
-    close(fd);
+    if (t_mm->lock && mlock(t_mm->addr, len) == -1) {
+	rb_raise(rb_eArgError, "mlock(%d)", errno);
+    }
     t_mm->len  = len;
 }
 
@@ -1166,6 +1206,61 @@ mm_undefined(argc, argv, obj)
     rb_raise(rb_eNameError, "not yet implemented");
 }
 
+static VALUE
+mm_mlockall(obj, flag)
+    VALUE obj, flag;
+{
+    if (mlockall(NUM2INT(flag)) == -1) {
+	rb_raise(rb_eArgError, "mlockall(%d)", errno);
+    }
+    return Qnil;
+}
+
+static VALUE
+mm_munlockall(obj)
+    VALUE obj;
+{
+    if (munlockall() == -1) {
+	rb_raise(rb_eArgError, "munlockall(%d)", errno);
+    }
+    return Qnil;
+}
+
+static VALUE
+mm_mlock(obj)
+    VALUE obj;
+{
+    mm_mmap *t_mm;
+
+    Data_Get_Struct(obj, mm_mmap, t_mm);
+    if (t_mm->lock) {
+	return obj;
+    }
+    if (mlock(t_mm->addr, t_mm->len) == -1) {
+	rb_raise(rb_eArgError, "mlock(%d)", errno);
+    }
+    t_mm->lock = 1;
+    return obj;
+}
+
+static VALUE
+mm_munlock(obj)
+    VALUE obj;
+{
+    mm_mmap *t_mm;
+
+    Data_Get_Struct(obj, mm_mmap, t_mm);
+    if (!t_mm->lock) {
+	return obj;
+    }
+    if (munlock(t_mm->addr, t_mm->len) == -1) {
+	rb_raise(rb_eArgError, "munlock(%d)", errno);
+    }
+    t_mm->lock = 0;
+    return obj;
+}
+
+
 void
 Init_mmap()
 {
@@ -1205,9 +1300,21 @@ Init_mmap()
 #ifdef MAP_ANONYMOUS
     rb_define_const(mm_cMap, "MAP_ANONYMOUS", INT2FIX(MAP_ANONYMOUS));
 #endif
+#ifdef MAP_NOSYNC
+    rb_define_const(mm_cMap, "MAP_NOSYNC", INT2FIX(MAP_NOSYNC));
+#endif
+    rb_define_const(mm_cMap, "MCL_CURRENT", INT2FIX(MCL_CURRENT));
+    rb_define_const(mm_cMap, "MCL_FUTURE", INT2FIX(MCL_FUTURE));
+
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
+
     rb_define_singleton_method(mm_cMap, "new", mm_map, -1);
+    rb_define_singleton_method(mm_cMap, "mlockall", mm_mlockall, 1);
+    rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
+    rb_define_singleton_method(mm_cMap, "munlockall", mm_munlockall, 0);
+    rb_define_singleton_method(mm_cMap, "unlockall", mm_munlockall, 0);
+
     rb_define_method(mm_cMap, "unmap", mm_unmap, 0);
     rb_define_method(mm_cMap, "munmap", mm_unmap, 0);
     rb_define_method(mm_cMap, "msync", mm_msync, -1);
@@ -1216,6 +1323,12 @@ Init_mmap()
     rb_define_method(mm_cMap, "mprotect", mm_mprotect, 1);
     rb_define_method(mm_cMap, "protect", mm_mprotect, 1);
     rb_define_method(mm_cMap, "madvise", mm_madvise, 1);
+    rb_define_method(mm_cMap, "advise", mm_madvise, 1);
+    rb_define_method(mm_cMap, "mlock", mm_mlock, 0);
+    rb_define_method(mm_cMap, "lock", mm_mlock, 0);
+    rb_define_method(mm_cMap, "munlock", mm_munlock, 0);
+    rb_define_method(mm_cMap, "unlock", mm_munlock, 0);
+
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
     rb_define_method(mm_cMap, "freeze", mm_freeze, 1);
     rb_define_method(mm_cMap, "clone", mm_undefined, -1);

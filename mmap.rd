@@ -19,11 +19,16 @@ Object
 
 == Class Methods
 
+--- lockall(flag)
+      disable paging of all pages mapped. ((|flag|)) can be 
+      ((|Mmap::MCL_CURRENT|)) or ((|Mmap::MCL_FUTURE|))
+
 --- new(file, [mode [, protection [, options]]])
       create a new object
 
         : ((|file|))
-            Pathname of the file
+            Pathname of the file, if ((|nil|)) is given an anonymous map
+            is created ((|Mmanp::MAP_ANON|))
 
         : ((|mode|))
             Mode to open the file, it can be "r", "w" or "rw"
@@ -54,6 +59,10 @@ Object
                : ((|advice|))
                    The type of the access (see #madvise)
 
+
+--- unlockall
+     reenable paging
+
 == Methods
 
 --- extend(count)
@@ -67,9 +76,15 @@ Object
 --- mprotect(mode)
      change the mode, value must be "r", "w" or "rw"
 
+--- mlock
+     disable paging
+
 --- msync
 --- flush
      flush the file
+
+--- munlock
+     reenable paging
 
 --- munmap
      terminate the association

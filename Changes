@@ -1,0 +1,6 @@
+
+-- 0.1.2
+
+* fixed some bugs (options & new) (Thanks Joseph McDonald <joe@vpop.net>)
+* added anonymous map
+* added mlock, munlock, etc

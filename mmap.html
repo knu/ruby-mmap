@@ -31,6 +31,13 @@ Object
 <H2><A NAME="label:4">Class Methods
 </A></H2><!-- RDLabel: "Class Methods" -->
 <DL>
+<DT><A NAME="lockall"><CODE>lockall(<var>flag</var>)</CODE></A><!-- RDLabel: "lockall" -->
+<DD>
+<P>
+disable paging of all pages mapped. <VAR>flag</VAR> can be 
+<VAR>Mmap::MCL_CURRENT</VAR> or <VAR>Mmap::MCL_FUTURE</VAR>
+</P>
+</DD>
 <DT><A NAME="new"><CODE>new(<var>file</var>, [<var>mode</var> [, <var>protection</var> [, <var>options</var>]]])</CODE></A><!-- RDLabel: "new" -->
 <DD>
 <P>
@@ -42,7 +49,8 @@ create a new object
 </A><!-- RDLabel: "file" -->
 <DD>
 <P>
-Pathname of the file
+Pathname of the file, if <VAR>nil</VAR> is given an anonymous map
+is created <VAR>Mmanp::MAP_ANON</VAR>
 </P>
 </DD>
 <DT><A NAME="label:8"><VAR>mode</VAR>
@@ -114,6 +122,12 @@ The type of the access (see #madvise)
 </DD>
 </DL>
 </DD>
+<DT><A NAME="unlockall"><CODE>unlockall</CODE></A><!-- RDLabel: "unlockall" -->
+<DD>
+<P>
+reenable paging
+</P>
+</DD>
 </DL>
 <H2><A NAME="label:5">Methods
 </A></H2><!-- RDLabel: "Methods" -->
@@ -138,11 +152,23 @@ add <VAR>count</VAR> bytes to the file (i.e. pre-extend the file)
 change the mode, value must be "r", "w" or "rw"
 </P>
 </DD>
+<DT><A NAME="mlock"><CODE>mlock</CODE></A><!-- RDLabel: "mlock" -->
+<DD>
+<P>
+disable paging
+</P>
+</DD>
 <DT><A NAME="msync"><CODE>msync</CODE></A><!-- RDLabel: "msync" -->
 <DT><A NAME="flush"><CODE>flush</CODE></A><!-- RDLabel: "flush" -->
 <DD>
 <P>
 flush the file
+</P>
+</DD>
+<DT><A NAME="munlock"><CODE>munlock</CODE></A><!-- RDLabel: "munlock" -->
+<DD>
+<P>
+reenable paging
 </P>
 </DD>
 <DT><A NAME="munmap"><CODE>munmap</CODE></A><!-- RDLabel: "munmap" -->
