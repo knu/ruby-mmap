@@ -8,6 +8,14 @@
 #include <intern.h>
 #include "version.h"
 
+#if RUBY_VERSION_CODE < 180
+#define StringValue(x) do {				\
+    if (TYPE(x) != T_STRING) x = rb_str_to_str(x);	\
+} while (0)
+#define StringValuePtr(x) STR2CSTR(x)
+#define SafeStringValue(x) Check_SafeStr(x)
+#endif
+
 #ifndef MADV_NORMAL
 #ifdef POSIX_MADV_NORMAL
 #define MADV_NORMAL     POSIX_MADV_NORMAL 
@@ -137,6 +145,7 @@ mm_freeze(obj)
     rb_obj_freeze(obj);
     GetMmap(obj, t_mm, 0);
     t_mm->flag |= MM_FROZEN;
+    return obj;
 }
 
 static VALUE
@@ -282,7 +291,7 @@ mm_i_options(arg, obj)
     key = rb_ary_entry(arg, 0);
     value = rb_ary_entry(arg, 1);
     key = rb_obj_as_string(key);
-    options = RSTRING(key)->ptr;
+    options = StringValuePtr(key);
     if (strcmp(options, "length") == 0) {
 	t_mm->len = NUM2INT(value);
 	if (t_mm->len <= 0) {
@@ -371,8 +380,8 @@ mm_s_new(argc, argv, obj)
 	}
 	if (NIL_P(fdv)) {
 	    fname = rb_str_to_str(fname);
-	    Check_SafeStr(fname);
-	    path = RSTRING(fname)->ptr;
+	    SafeStringValue(fname);
+	    path = StringValuePtr(fname);
 	}
 	else {
 	    fd = NUM2INT(fdv);
@@ -398,11 +407,11 @@ mm_s_new(argc, argv, obj)
 	}
 	else if (TYPE(vmode) == T_ARRAY && RARRAY(vmode)->len >= 2) {
 	    VALUE tmp = RARRAY(vmode)->ptr[0];
-	    mode = STR2CSTR(tmp);
+	    mode = StringValuePtr(tmp);
 	    perm = NUM2INT(RARRAY(vmode)->ptr[1]);
 	}
 	else {
-	    mode = STR2CSTR(vmode);
+	    mode = StringValuePtr(vmode);
 	}
 	if (strcmp(mode, "r") == 0) {
 	    smode = O_RDONLY;
@@ -566,7 +575,7 @@ mm_mprotect(obj, a)
 
     GetMmap(obj, t_mm, 0);
     if (TYPE(a) == T_STRING) {
-	smode = STR2CSTR(a);
+	smode = StringValuePtr(a);
 	if (strcmp(smode, "r") == 0) pmode = PROT_READ;
 	else if (strcmp(smode, "w") == 0) pmode = PROT_WRITE;
 	else if (strcmp(smode, "rw") == 0 || strcmp(smode, "wr") == 0)
@@ -625,8 +634,7 @@ do {									   \
 	bl = b_mm->real;						   \
     }									   \
     else {								   \
-	if (TYPE(b) != T_STRING) b = rb_str_to_str(b);			   \
-	bp = RSTRING(b)->ptr;						   \
+	bp = StringValuePtr(b);						   \
 	bl = RSTRING(b)->len;						   \
     }									   \
 } while (0);
@@ -740,7 +748,7 @@ mm_correct_backref(t_mm)
     if (NIL_P(match)) return 0;
     if (RMATCH(match)->BEG(0) == -1) return 0;
     start = RMATCH(match)->BEG(0);
-    RMATCH(match)->str = rb_str_new(RSTRING(RMATCH(match)->str)->ptr + start,
+    RMATCH(match)->str = rb_str_new(StringValuePtr(RMATCH(match)->str) + start,
 				    RMATCH(match)->END(0) - start);
     if (OBJ_TAINTED(match)) OBJ_TAINT(RMATCH(match)->str);
     for (i = 0; i < RMATCH(match)->regs->num_regs && RMATCH(match)->BEG(i) != -1; i++) {
@@ -1112,7 +1120,7 @@ mm_append(str1, str2)
     VALUE str1, str2;
 {
     str2 = rb_str_to_str(str2);
-    str1 = mm_cat(str1, RSTRING(str2)->ptr, RSTRING(str2)->len);
+    str1 = mm_cat(str1, StringValuePtr(str2), RSTRING(str2)->len);
     return str1;
 }
 
@@ -1392,6 +1400,17 @@ mm_bang_i(obj, flag, id, argc, argv)
     return (flag & MM_ORIGIN)?res:obj;
 
 }
+
+#if RUBY_VERSION_CODE >= 180
+
+static VALUE
+mm_match_m(a, b)
+    VALUE a, b;
+{
+    return mm_bang_i(a, MM_ORIGIN, rb_intern("match"), 1, &b);
+}
+
+#endif
 
 static VALUE
 mm_upcase_bang(a)
@@ -1752,6 +1771,9 @@ Init_mmap()
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
     rb_define_method(mm_cMap, "freeze", mm_freeze, 0);
     rb_define_method(mm_cMap, "clone", mm_undefined, -1);
+#if RUBY_VERSION_CODE >= 180
+    rb_define_method(mm_cMap, "initialize_copy", mm_undefined, -1);
+#endif
     rb_define_method(mm_cMap, "dup", mm_undefined, -1);
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
     rb_define_method(mm_cMap, "==", mm_equal, 1);
@@ -1774,6 +1796,9 @@ Init_mmap()
     rb_define_method(mm_cMap, "empty?", mm_empty, 0);
     rb_define_method(mm_cMap, "=~", mm_match, 1);
     rb_define_method(mm_cMap, "~", mm_undefined, -1);
+#if RUBY_VERSION_CODE >= 180
+    rb_define_method(mm_cMap, "match", mm_match_m, 1);
+#endif
     rb_define_method(mm_cMap, "succ", mm_undefined, -1);
     rb_define_method(mm_cMap, "succ!", mm_undefined, -1);
     rb_define_method(mm_cMap, "next", mm_undefined, -1);
@@ -1785,6 +1810,7 @@ Init_mmap()
 
     rb_define_method(mm_cMap, "to_i", mm_undefined, -1);
     rb_define_method(mm_cMap, "to_f", mm_undefined, -1);
+    rb_define_method(mm_cMap, "to_sym", mm_undefined, -1);
     rb_define_method(mm_cMap, "to_s", rb_any_to_s, 0);
     rb_define_method(mm_cMap, "to_str", mm_to_str, 0);
     rb_define_method(mm_cMap, "inspect", mm_inspect, 0);
