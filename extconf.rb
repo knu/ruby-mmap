@@ -1,5 +1,15 @@
 require "mkmf"
+
+$stat_lib = if CONFIG.key?("LIBRUBYARG_STATIC")
+               $LDFLAGS += " -L#{CONFIG['libdir']}"
+               CONFIG["LIBRUBYARG_STATIC"]
+            else
+               "-lruby"
+            end
+$static ||= nil
+
 create_makefile "mmap"
+
 begin
    make = open("Makefile", "a")
    make.puts "\ntest: $(DLLIB)"
@@ -12,7 +22,7 @@ begin
 
 unknown: $(DLLIB)
 \t@echo "main() {}" > /tmp/a.c
-\t$(CC) -static /tmp/a.c $(OBJS) $(CPPFLAGS) $(DLDFLAGS) -lruby #{CONFIG["LIBS"]} $(LIBS) $(LOCAL_LIBS)
+\t$(CC) -static /tmp/a.c $(OBJS) $(CPPFLAGS) $(DLDFLAGS) #$stat_lib #{CONFIG["LIBS"]} $(LIBS) $(LOCAL_LIBS)
 \t@-rm /tmp/a.c a.out
 
 %.html: %.rd

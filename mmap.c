@@ -312,9 +312,8 @@ mm_i_options(arg, obj)
 
 #if RUBY_VERSION_CODE >= 172
 static VALUE
-mm_s_alloc(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_s_alloc(obj)
+    VALUE obj;
 {
     VALUE res;
     mm_mmap *t_mm;
@@ -1719,7 +1718,11 @@ Init_mmap()
     rb_include_module(mm_cMap, rb_mEnumerable);
 
 #if RUBY_VERSION_CODE >= 172
-    rb_define_singleton_method(mm_cMap, "allocate", mm_s_alloc, -1);
+#if RUBY_VERSION_CODE >= 180
+    rb_define_alloc_func(mm_cMap, mm_s_alloc);
+#else
+    rb_define_singleton_method(mm_cMap, "allocate", mm_s_alloc, 0);
+#endif
 #else
     rb_define_singleton_method(mm_cMap, "new", mm_s_new, -1);
 #endif

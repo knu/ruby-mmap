@@ -49,3 +49,7 @@
 
 * String#slice! was modified in 1.6.8
 * added ::new(IO)
+
+--- 0.2.0
+
+* adapted for 1.8.0
