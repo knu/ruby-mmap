@@ -1,4 +1,5 @@
 #!/usr/bin/ruby
+$LOAD_PATH.unshift "."
 require "mmap"
 PAGESIZE = 4096
 f = File.open("aa", "w")

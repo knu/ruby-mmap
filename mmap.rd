@@ -123,6 +123,8 @@ self <=> other
 
 <<(other) 
 
+casecmp(other)   >= 1.7.1
+
 concat(other) 
 
 capitalize! 
@@ -130,6 +132,8 @@ capitalize!
 chop! 
 
 chomp!([rs]) 
+
+count(o1 [, o2, ...])
 
 crypt(salt) 
 
@@ -157,6 +161,8 @@ include?(other)
 
 index(substr[, pos]) 
 
+insert(index, str) >= 1.7.1
+
 length 
 
 reverse! 
@@ -168,6 +174,10 @@ scan(pattern)
 scan(pattern) {...} 
 
 size 
+
+slice
+
+slice!
 
 split([sep[, limit]]) 
 

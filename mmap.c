@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 #include <rubyio.h>
 #include <intern.h>
+#include "version.h"
 
 #include <re.h>
 
@@ -353,7 +354,7 @@ mm_extend(obj, a)
     mm_mmap *t_mm;
 
     GetMmap(obj, t_mm, MM_MODIFY);
-    mm_realloc(t_mm, t_mm->len + NEW2LONG(a));
+    mm_realloc(t_mm, t_mm->len + NUM2LONG(a));
     return INT2NUM(t_mm->len);
 }
 
@@ -438,36 +439,69 @@ mm_madvise(obj, a)
     return Qnil;
 }
 
+#define StringMmap(b, bp, bl)						\
+    do {								\
+        if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap)) {	\
+	    mm_mmap *b_mm;						\
+									\
+	    GetMmap(b, b_mm, 0);					\
+	    bp = b_mm->addr;						\
+	    bl = b_mm->real;						\
+	}								\
+	else {								\
+	    if (TYPE(b) != T_STRING) b = rb_str_to_str(b);		\
+	    bp = RSTRING(b)->ptr;					\
+	    bl = RSTRING(b)->len;					\
+	}								\
+    } while (0);
+
+
 static void
-mm_replace(str, beg, len, val)
+mm_update(str, beg, len, val)
     mm_mmap *str;
     VALUE val;
     long beg;
     long len;
 {
+    char *valp;
+    long vall;
+
     if (str->frozen & MM_FROZEN) rb_error_frozen("mmap");
+    if (len < 0) rb_raise(rb_eIndexError, "negative length %d", len);
+    if (beg < 0) {
+	beg += str->real;
+    }
+    if (beg < 0 || str->real < beg) {
+	if (beg < 0) {
+	    beg -= str->real;
+	}
+	rb_raise(rb_eIndexError, "index %d out of string", beg);
+    }
     if (str->real < beg + len) {
 	len = str->real - beg;
     }
-    if ((str->frozen & MM_FIXED) && RSTRING(val)->len != len) {
+
+    StringMmap(val, valp, vall);
+
+    if ((str->frozen & MM_FIXED) && vall != len) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
-    if (len < RSTRING(val)->len) {
-	mm_realloc(str, str->real+RSTRING(val)->len-len);
+    if (len < vall) {
+	mm_realloc(str, str->real + vall - len);
     }
 
-    if (RSTRING(val)->len != len) {
-	memmove(str->addr + beg + RSTRING(val)->len,
+    if (vall != len) {
+	memmove(str->addr + beg + vall,
 		str->addr + beg + len,
 		str->real - (beg + len));
     }
     if (str->real < beg && len < 0) {
 	MEMZERO(str->addr + str->real, char, -len);
     }
-    if (RSTRING(val)->len > 0) {
-	memmove(str->addr+beg, RSTRING(val)->ptr, RSTRING(val)->len);
+    if (vall > 0) {
+	memmove(str->addr+beg, valp, vall);
     }
-    str->real += RSTRING(val)->len - len;
+    str->real += vall - len;
 }
 
 static VALUE
@@ -720,8 +754,7 @@ mm_aset(str, indx, val)
 	    ((char *)t_mm->addr)[idx] = NUM2INT(val) & 0xff;
 	}
 	else {
-	    if (TYPE(val) != T_STRING) val = rb_str_to_str(val);
-	    mm_replace(t_mm, idx, 1, val);
+	    mm_update(t_mm, idx, 1, val);
 	}
 	return val;
 
@@ -737,8 +770,7 @@ mm_aset(str, indx, val)
       case T_STRING:
 	beg = mm_index(1, &indx, str);
 	if (beg != -1) {
-	    if (TYPE(val) != T_STRING) val = rb_str_to_str(val);
-	    mm_replace(str, beg, RSTRING(indx)->len, val);
+	    mm_update(str, beg, RSTRING(indx)->len, val);
 	}
 	return val;
 
@@ -747,8 +779,7 @@ mm_aset(str, indx, val)
 	{
 	    long beg, len;
 	    if (rb_range_beg_len(indx, &beg, &len, t_mm->real, 2)) {
-		if (TYPE(val) != T_STRING) val = rb_str_to_str(val);
-		mm_replace(t_mm, beg, len, val);
+		mm_update(t_mm, beg, len, val);
 		return val;
 	    }
 	}
@@ -772,26 +803,55 @@ mm_aset_m(argc, argv, str)
 	if (TYPE(argv[2]) != T_STRING) argv[2] = rb_str_to_str(argv[2]);
 	beg = NUM2INT(argv[0]);
 	len = NUM2INT(argv[1]);
-	if (len < 0) rb_raise(rb_eIndexError, "negative length %d", len);
-	if (beg < 0) {
-	    beg += t_mm->real;
-	}
-	if (beg < 0 || t_mm->real < beg) {
-	    if (beg < 0) {
-		beg -= t_mm->real;
-	    }
-	    rb_raise(rb_eIndexError, "index %d out of string", beg);
-	}
-	if (beg + len > t_mm->real) {
-	    len = t_mm->real - beg;
-	}
-	mm_replace(t_mm, beg, len, argv[2]);
+	mm_update(t_mm, beg, len, argv[2]);
 	return argv[2];
     }
     if (argc != 2) {
 	rb_raise(rb_eArgError, "wrong # of arguments(%d for 2)", argc);
     }
     return mm_aset(str, argv[0], argv[1]);
+}
+
+static VALUE
+mm_insert(str, idx, str2)
+    VALUE str, idx, str2;
+{
+    mm_mmap *t_mm;
+    long pos = NUM2LONG(idx);
+
+    GetMmap(str, t_mm, MM_MODIFY);
+    if (pos == -1) {
+	pos = RSTRING(str)->len;
+    }
+    else if (pos < 0) {
+	pos++;
+    }
+    mm_update(t_mm, pos, 0, str2);
+    return str;
+}
+
+static VALUE mm_aref_m _((int, VALUE *, VALUE));
+
+static VALUE
+mm_slice_bang(argc, argv, str)
+    int argc;
+    VALUE *argv;
+    VALUE str;
+{
+    VALUE result;
+    VALUE buf[3];
+    int i;
+
+    if (argc < 1 || 2 < argc) {
+	rb_raise(rb_eArgError, "wrong # of arguments(%d for 1)", argc);
+    }
+    for (i = 0; i < argc; i++) {
+	buf[i] = argv[i];
+    }
+    buf[i] = rb_str_new(0,0);
+    result = mm_aref_m(argc, buf, str);
+    mm_aset_m(argc+1, buf, str);
+    return result;
 }
 
 static VALUE
@@ -879,6 +939,19 @@ mm_strip_bang(str)
 
     return str;
 }
+
+#define MmapStr(b, recycle)						\
+do {									\
+    recycle = 0;							\
+    if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap) == Qtrue) {	\
+	recycle = 1;							\
+	b = mm_str(b, MM_ORIGIN);					\
+    }									\
+    else {								\
+	b = rb_str_to_str(b);						\
+    }									\
+} while (0);
+ 
  
 static VALUE
 mm_cmp(a, b)
@@ -888,15 +961,31 @@ mm_cmp(a, b)
     int recycle = 0;
 
     a = mm_str(a, MM_ORIGIN);
-    if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap) == Qtrue) {
-	recycle = 1;
-	b = mm_str(b, MM_ORIGIN);
-    }
+    MmapStr(b, recycle);
     result = rb_str_cmp(a, b);
     rb_gc_force_recycle(a);
     if (recycle) rb_gc_force_recycle(b);
     return INT2FIX(result);
 }
+
+#if RUBY_VERSION_CODE >= 171
+
+static VALUE
+mm_casecmp(a, b)
+    VALUE a, b;
+{
+    VALUE result;
+    int recycle = 0;
+
+    a = mm_str(a, MM_ORIGIN);
+    MmapStr(b, recycle);
+    result = rb_funcall2(a, rb_intern("casecmp"), 1, &b);
+    rb_gc_force_recycle(a);
+    if (recycle) rb_gc_force_recycle(b);
+    return result;
+}
+
+#endif
 
 static VALUE
 mm_equal(a, b)
@@ -906,10 +995,7 @@ mm_equal(a, b)
     int recycle = 0;
     
     a = mm_str(a, MM_ORIGIN);
-    if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap) == Qtrue) {
-	recycle = 1;
-	b = mm_str(b, MM_ORIGIN);
-    }
+    MmapStr(b, recycle);
     result = rb_funcall2(a, rb_intern("=="), 1, &b);
     rb_gc_force_recycle(a);
     if (recycle) rb_gc_force_recycle(b);
@@ -1121,7 +1207,7 @@ mm_rindex(argc, argv, obj)
 }
 
 static VALUE
-mm_aref(argc, argv, obj)
+mm_aref_m(argc, argv, obj)
     int argc;
     VALUE *argv, obj;
 {
@@ -1142,6 +1228,14 @@ mm_split(argc, argv, obj)
     VALUE *argv, obj;
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("split"), argc, argv);
+}
+
+static VALUE
+mm_count(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    return mm_bang_i(obj, MM_ORIGIN, rb_intern("count"), argc, argv);
 }
 
 static VALUE
@@ -1338,11 +1432,17 @@ Init_mmap()
     rb_define_method(mm_cMap, "===", mm_equal, 1);
     rb_define_method(mm_cMap, "eql?", mm_equal, 1);
     rb_define_method(mm_cMap, "hash", mm_hash, 0);
+#if RUBY_VERSION_CODE >= 171
+    rb_define_method(mm_cMap, "casecmp", mm_casecmp, 1);
+#endif
     rb_define_method(mm_cMap, "+", mm_undefined, -1);
     rb_define_method(mm_cMap, "*", mm_undefined, -1);
     rb_define_method(mm_cMap, "%", mm_undefined, -1);
-    rb_define_method(mm_cMap, "[]", mm_aref, -1);
+    rb_define_method(mm_cMap, "[]", mm_aref_m, -1);
     rb_define_method(mm_cMap, "[]=", mm_aset_m, -1);
+#if RUBY_VERSION_CODE >= 171
+    rb_define_method(mm_cMap, "insert", mm_insert, 2);
+#endif
     rb_define_method(mm_cMap, "length", mm_size, 0);
     rb_define_method(mm_cMap, "size", mm_size, 0);
     rb_define_method(mm_cMap, "empty?", mm_empty, 0);
@@ -1408,7 +1508,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "tr_s", mm_undefined, -1);
     rb_define_method(mm_cMap, "delete", mm_undefined, -1);
     rb_define_method(mm_cMap, "squeeze", mm_undefined, -1);
-
+    rb_define_method(mm_cMap, "count", mm_count, -1);
     rb_define_method(mm_cMap, "tr!", mm_tr_bang, 2);
     rb_define_method(mm_cMap, "tr_s!", mm_tr_s_bang, 2);
     rb_define_method(mm_cMap, "delete!", mm_delete_bang, -1);
@@ -1419,4 +1519,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "each_byte", mm_each_byte, -1);
 
     rb_define_method(mm_cMap, "sum", mm_sum, -1);
+
+    rb_define_method(mm_cMap, "slice", mm_aref_m, -1);
+    rb_define_method(mm_cMap, "slice!", mm_slice_bang, -1);
 }
