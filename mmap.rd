@@ -3,12 +3,10 @@
 
 ((<Download|URL:ftp://moulon.inra.fr/pub/ruby/>))
 
-#^
 The Mmap class implement memory-mapped file objects
 
 === WARNING
 === The variables $' and $` are not available with gsub! and sub!
-#^
 
 == SuperClass
 
@@ -18,10 +16,7 @@ Object
 
 * Comparable
 * Enumerable
-# class Mmap
-#  include Comparable
-#  include Enumerable
-#  class << self
+
 == Class Methods
 
 --- lockall(flag)
@@ -69,7 +64,6 @@ Object
 --- unlockall
      reenable paging
 
-#  end
 == Methods
 
 --- extend(count)

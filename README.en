@@ -11,6 +11,7 @@
 
     make rd2
     make rdoc
+    make ri
 
     See mmap.rd, mmap.html
 

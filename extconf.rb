@@ -15,6 +15,12 @@ end
 
 dir_config("mmap")
 
+["lstrip", "match", "insert", "casecmp"].each do |func|
+   if "aa".respond_to?(func)
+      $CFLAGS += " -DHAVE_RB_STR_#{func.upcase}"
+   end
+end
+
 create_makefile "mmap"
 
 begin
@@ -30,7 +36,7 @@ begin
 
 unknown: $(DLLIB)
 \t@echo "main() {}" > /tmp/a.c
-\t$(CC) -static /tmp/a.c $(OBJS) $(CPPFLAGS) $(LIBPATH) $(LIBS) $(LOCAL_LIBS)
+\t$(CC) -static /tmp/a.c $(OBJS) $(CPPFLAGS) $(DLDFLAGS) $(LIBS) $(LOCAL_LIBS)
 \t@-rm /tmp/a.c a.out
 
 EOT
@@ -43,15 +49,20 @@ EOT
    make.print "HTML = mmap.html"
    docs = Dir['docs/*.rd']
    docs.each {|x| make.print " \\\n\t#{x.sub(/\.rd$/, '.html')}" }
-   make.print "\n\nRDOC = mmap.rd"
-   docs.each {|x| make.print " \\\n\t#{x}" }
+   make.print "\n\nRDOC = docs/mmap.rb"
    make.puts
    make.print <<-EOF
 
 rdoc: docs/doc/index.html
 
 docs/doc/index.html: $(RDOC)
-\t@-(cd docs; $(RUBY) b.rb mmap; rdoc mmap.rb)
+\t@-(cd docs; rdoc mmap.rb)
+
+ri: docs/mmap.rb
+\t@-(cd docs; rdoc -r mmap.rb)
+
+ri-site: docs/mmap.rb
+\t@-(cd docs; rdoc -R mmap.rb)
 
 rd2: html
 

@@ -7,7 +7,6 @@
 #include <sys/mman.h>
 #include <rubyio.h>
 #include <intern.h>
-#include "version.h"
 #include <re.h>
 
 #ifndef StringValue
@@ -160,7 +159,7 @@ mm_str(obj, modify)
 	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
 	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
     }
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_DEFINE_ALLOC_FUNC
     ret = rb_obj_alloc(rb_cString);
     if (rb_obj_tainted(obj)) {
 	OBJ_TAINT(ret);
@@ -177,7 +176,7 @@ mm_str(obj, modify)
     RSTRING(ret)->ptr = t_mm->addr;
     RSTRING(ret)->len = t_mm->real;
     if (modify & MM_ORIGIN) {
-#if RUBY_VERSION_CODE >= 172
+#if HAVE_RB_DEFINE_ALLOC_FUNC
 	RSTRING(ret)->aux.shared = ret;
 	FL_SET(ret, ELTS_SHARED);
 #else
@@ -317,8 +316,16 @@ mm_i_options(arg, obj)
     return Qnil;
 }
 
+static VALUE
+mm_s_new(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    VALUE res = rb_funcall2(obj, rb_intern("allocate"), 0, 0);
+    rb_obj_call_init(res, argc, argv);
+    return res;
+}
 
-#if RUBY_VERSION_CODE >= 172
 static VALUE
 mm_s_alloc(obj)
     VALUE obj;
@@ -330,21 +337,16 @@ mm_s_alloc(obj)
     t_mm->incr = EXP_INCR_SIZE;
     return res;
 }
-#endif
 
 static VALUE
-#if RUBY_VERSION_CODE >= 172
 mm_init(argc, argv, obj)
-#else
-mm_s_new(argc, argv, obj)
-#endif
     VALUE obj, *argv;
     int argc;
 {
     struct stat st;
     int fd, smode = 0, pmode = 0, vscope, perm, init;
     MMAP_RETTYPE addr;
-    VALUE res, fname, fdv, vmode, scope, options;
+    VALUE fname, fdv, vmode, scope, options;
     mm_mmap *t_mm;
     char *path, *mode;
     size_t size = 0;
@@ -450,16 +452,10 @@ mm_s_new(argc, argv, obj)
 	    size = NUM2INT(vmode);
 	}
     }
-#if RUBY_VERSION_CODE >= 172
     Data_Get_Struct(obj, mm_mmap, t_mm);
-    res = obj;
-#else
-    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
-    t_mm->incr = EXP_INCR_SIZE;
-#endif
     offset = 0;
     if (options != Qnil) {
-	rb_iterate(rb_each, options, mm_i_options, res);
+	rb_iterate(rb_each, options, mm_i_options, obj);
 	if (path && (t_mm->len + t_mm->offset) > st.st_size) {
 	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
 		     t_mm->len, t_mm->offset);
@@ -525,31 +521,17 @@ mm_s_new(argc, argv, obj)
     t_mm->smode = smode;
     t_mm->path = (path)?ruby_strdup(path):(char *)-1;
     if (smode == O_RDONLY) {
-	res = rb_obj_freeze(res);
+	obj = rb_obj_freeze(obj);
 	t_mm->flag |= MM_FROZEN;
     }
     else {
 	if (smode == O_WRONLY) {
 	    t_mm->flag |= MM_FIXED;
 	}
-	OBJ_TAINT(res);
+	OBJ_TAINT(obj);
     }
-#if RUBY_VERSION_CODE < 172
-    rb_obj_call_init(res, argc, argv);
-#endif
-    return res;
-}
-
-#if RUBY_VERSION_CODE < 171
-static VALUE
-mm_init(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
-{
     return obj;
 }
-#endif
-
 
 static VALUE
 mm_msync(argc, argv, obj)
@@ -915,7 +897,7 @@ mm_gsub_bang(argc, argv, obj)
 
 static VALUE mm_index __((int, VALUE *, VALUE));
 
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_DEFINE_ALLOC_FUNC
 
 static void
 mm_subpat_set(obj, re, offset, val)
@@ -980,7 +962,7 @@ mm_aset(str, indx, val)
 	return val;
 
       case T_REGEXP:
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_DEFINE_ALLOC_FUNC
 	  mm_subpat_set(str, indx, 0, val);
 #else 
         {
@@ -1029,7 +1011,7 @@ mm_aset_m(argc, argv, str)
     if (argc == 3) {
 	long beg, len;
 
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_DEFINE_ALLOC_FUNC
 	if (TYPE(argv[0]) == T_REGEXP) {
 	    mm_subpat_set(str, argv[0], NUM2INT(argv[1]), argv[2]);
 	}
@@ -1048,7 +1030,7 @@ mm_aset_m(argc, argv, str)
     return mm_aset(str, argv[0], argv[1]);
 }
 
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_INSERT
 
 static VALUE
 mm_insert(str, idx, str2)
@@ -1090,13 +1072,9 @@ mm_slice_bang(argc, argv, str)
     }
     buf[i] = rb_str_new(0,0);
     result = mm_aref_m(argc, buf, str);
-#if RUBY_VERSION_CODE >= 168
     if (!NIL_P(result)) {
-#endif
 	mm_aset_m(argc+1, buf, str);
-#if RUBY_VERSION_CODE >= 168
     }
-#endif
     return result;
 }
 
@@ -1153,7 +1131,7 @@ mm_concat(str1, str2)
     return str1;
 }
 
-#if RUBY_VERSION_CODE < 171
+#ifndef HAVE_RB_STR_LSTRIP
 
 static VALUE
 mm_strip_bang(str)
@@ -1171,18 +1149,18 @@ mm_strip_bang(str)
     t++;
 
     if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
-	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
+        rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t-s;
     if (s > (char *)t_mm->addr) { 
-	memmove(t_mm->addr, s, t_mm->real);
-	((char *)t_mm->addr)[t_mm->real] = '\0';
+        memmove(t_mm->addr, s, t_mm->real);
+        ((char *)t_mm->addr)[t_mm->real] = '\0';
     }
     else if (t < e) {
-	((char *)t_mm->addr)[t_mm->real] = '\0';
+        ((char *)t_mm->addr)[t_mm->real] = '\0';
     }
     else {
-	return Qnil;
+        return Qnil;
     }
 
     return str;
@@ -1279,7 +1257,7 @@ mm_cmp(a, b)
     return INT2FIX(result);
 }
 
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_CASECMP
 
 static VALUE
 mm_casecmp(a, b)
@@ -1415,7 +1393,7 @@ mm_bang_i(obj, flag, id, argc, argv)
 
 }
 
-#if RUBY_VERSION_CODE >= 180
+#if HAVE_RB_STR_MATCH
 
 static VALUE
 mm_match_m(a, b)
@@ -1750,15 +1728,12 @@ Init_mmap()
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
 
-#if RUBY_VERSION_CODE >= 172
-#if RUBY_VERSION_CODE >= 180
+#if HAVE_RB_DEFINE_ALLOC_FUNC
     rb_define_alloc_func(mm_cMap, mm_s_alloc);
 #else
     rb_define_singleton_method(mm_cMap, "allocate", mm_s_alloc, 0);
 #endif
-#else
     rb_define_singleton_method(mm_cMap, "new", mm_s_new, -1);
-#endif
     rb_define_singleton_method(mm_cMap, "mlockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "munlockall", mm_munlockall, 0);
@@ -1785,16 +1760,14 @@ Init_mmap()
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
     rb_define_method(mm_cMap, "freeze", mm_freeze, 0);
     rb_define_method(mm_cMap, "clone", mm_undefined, -1);
-#if RUBY_VERSION_CODE >= 180
     rb_define_method(mm_cMap, "initialize_copy", mm_undefined, -1);
-#endif
     rb_define_method(mm_cMap, "dup", mm_undefined, -1);
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
     rb_define_method(mm_cMap, "==", mm_equal, 1);
     rb_define_method(mm_cMap, "===", mm_equal, 1);
     rb_define_method(mm_cMap, "eql?", mm_eql, 1);
     rb_define_method(mm_cMap, "hash", mm_hash, 0);
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_CASECMP
     rb_define_method(mm_cMap, "casecmp", mm_casecmp, 1);
 #endif
     rb_define_method(mm_cMap, "+", mm_undefined, -1);
@@ -1802,7 +1775,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "%", mm_undefined, -1);
     rb_define_method(mm_cMap, "[]", mm_aref_m, -1);
     rb_define_method(mm_cMap, "[]=", mm_aset_m, -1);
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_INSERT
     rb_define_method(mm_cMap, "insert", mm_insert, 2);
 #endif
     rb_define_method(mm_cMap, "length", mm_size, 0);
@@ -1810,7 +1783,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "empty?", mm_empty, 0);
     rb_define_method(mm_cMap, "=~", mm_match, 1);
     rb_define_method(mm_cMap, "~", mm_undefined, -1);
-#if RUBY_VERSION_CODE >= 180
+#if HAVE_RB_STR_MATCH
     rb_define_method(mm_cMap, "match", mm_match_m, 1);
 #endif
     rb_define_method(mm_cMap, "succ", mm_undefined, -1);
@@ -1863,7 +1836,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "chop", mm_undefined, -1);
     rb_define_method(mm_cMap, "chomp", mm_undefined, -1);
     rb_define_method(mm_cMap, "strip", mm_undefined, -1);
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_LSTRIP
     rb_define_method(mm_cMap, "lstrip", mm_undefined, -1);
     rb_define_method(mm_cMap, "rstrip", mm_undefined, -1);
 #endif
@@ -1871,7 +1844,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "sub!", mm_sub_bang, -1);
     rb_define_method(mm_cMap, "gsub!", mm_gsub_bang, -1);
     rb_define_method(mm_cMap, "strip!", mm_strip_bang, 0);
-#if RUBY_VERSION_CODE >= 171
+#if HAVE_RB_STR_LSTRIP
     rb_define_method(mm_cMap, "lstrip!", mm_lstrip_bang, 0);
     rb_define_method(mm_cMap, "rstrip!", mm_rstrip_bang, 0);
 #endif
