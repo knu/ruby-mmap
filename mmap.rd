@@ -31,7 +31,7 @@ Object
             is created ((|Mmanp::MAP_ANON|))
 
         : ((|mode|))
-            Mode to open the file, it can be "r", "w" or "rw"
+            Mode to open the file, it can be "r", "w", "rw", "a"
 
         : ((|protection|))
             specify the nature of the mapping

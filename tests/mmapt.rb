@@ -2,12 +2,18 @@
 $LOAD_PATH.unshift *%w{.. . tests}
 require 'mmap'
 require 'ftools'
-require 'runit/testcase'
-require 'runit/cui/testrunner'
+begin
+   require 'test/unit'
+   Inh = Test::Unit
+rescue LoadError
+   require 'runit/testcase'
+   require 'runit/cui/testrunner'
+   Inh = RUNIT
+end
 
 $mmap, $str = nil, nil
 
-class TestMmap < RUNIT::TestCase
+class TestMmap < Inh::TestCase
    def internal_init
       $mmap.unmap if $mmap
       file = "mmap.c"
@@ -190,4 +196,7 @@ class TestMmap < RUNIT::TestCase
 
 end
 
-RUNIT::CUI::TestRunner.run(TestMmap.suite)
+if defined?(RUNIT)
+   RUNIT::CUI::TestRunner.run(TestMmap.suite)
+end
+

@@ -30,3 +30,10 @@
 * adapted for 1.7.2 (mm_str)
 * corrected real for mm_sub_bang
 * protected against old class
+
+-- 0.1.7
+
+* 1.7.2 (::allocate, #initialize)
+* added "a" for ::new
+* experimental EXP_INCR_SIZE (4096) ("increment" => 4096)
+* tests for RUNIT/Test::Unit

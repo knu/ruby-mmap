@@ -34,12 +34,14 @@
 
 static VALUE mm_cMap;
 
+#define EXP_INCR_SIZE 4096
+
 typedef struct {
     MMAP_RETTYPE addr;
     int smode, pmode, vscope;
     int advice, frozen, lock;
     size_t len, real;
-    size_t size;
+    size_t size, incr;
     off_t offset;
     char *path;
 } mm_mmap;
@@ -164,162 +166,6 @@ mm_to_str(obj)
  
 extern char *ruby_strdup();
 
-static VALUE
-mm_i_options(arg, obj)
-    VALUE arg, obj;
-{
-    mm_mmap *t_mm;
-    char *options;
-    VALUE key, value;
-
-    Data_Get_Struct(obj, mm_mmap, t_mm);
-    key = rb_ary_entry(arg, 0);
-    value = rb_ary_entry(arg, 1);
-    key = rb_obj_as_string(key);
-    options = RSTRING(key)->ptr;
-    if (strcmp(options, "length") == 0) {
-	t_mm->size = NUM2INT(value);
-	if (t_mm->size <= 0) {
-	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->size);
-	}
-	t_mm->frozen |= MM_FIXED;
-    }
-    else if (strcmp(options, "offset") == 0) {
-	t_mm->offset = NUM2INT(value);
-	if (t_mm->offset < 0) {
-	    rb_raise(rb_eArgError, "Invalid value for offset %d", t_mm->offset);
-	}
-	t_mm->frozen |= MM_FIXED;
-    }
-    else if (strcmp(options, "advice") == 0) {
-	t_mm->advice = NUM2INT(value);
-    }
-    return Qnil;
-}
-
-static VALUE
-mm_s_new(argc, argv, obj)
-    VALUE obj, *argv;
-    int argc;
-{
-    struct stat st;
-    int fd, smode, pmode, vscope;
-    MMAP_RETTYPE addr;
-    VALUE res, fname, vmode, scope, options;
-    mm_mmap *t_mm;
-    char *path, *mode;
-    size_t size;
-    off_t offset;
-
-    options = Qnil;
-    if (argc > 1 && TYPE(argv[argc - 1]) == T_HASH) {
-	options = argv[argc - 1];
-	argc--;
-    }
-    rb_scan_args(argc, argv, "12", &fname, &vmode, &scope);
-    vscope = 0;
-#ifdef MAP_ANON
-    if (NIL_P(fname)) {
-	vscope = MAP_ANON;
-	path = 0;
-    }
-    else {
-	Check_SafeStr(fname);
-	path = RSTRING(fname)->ptr;
-	if (!NIL_P(scope)) {
-	    vscope = NUM2INT(scope);
-	    if (vscope & MAP_ANON) {
-		rb_raise(rb_eArgError, "filename specified for an anonymous map");
-	    }
-	}
-    }
-#else
-    Check_SafeStr(fname);
-    path = RSTRING(fname)->ptr;
-#endif
-    mode = NIL_P(vmode) ? "r" : STR2CSTR(vmode);
-    if (strcmp(mode, "r") == 0) {
-	smode = O_RDONLY;
-	pmode = PROT_READ;
-    }
-    else if (strcmp(mode, "w") == 0) {
-	smode = O_WRONLY;
-	pmode = PROT_WRITE;
-    }
-    else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
-	smode = O_RDWR;
-	pmode = PROT_READ | PROT_WRITE;
-    }
-    else {
-	rb_raise(rb_eArgError, "Invalid mode %s", mode);
-    }
-    vscope |= NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
-    size = 0;
-    if (path) {
-	if ((fd = open(path, smode)) == -1) {
-	    rb_raise(rb_eArgError, "Can't open %s", path);
-	}
-	if (fstat(fd, &st) == -1) {
-	    rb_raise(rb_eArgError, "Can't stat %s", path);
-	}
-	size = st.st_size;
-    }
-    else {
-	fd = -1;
-    }
-    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
-    offset = 0;
-    if (options != Qnil) {
-	rb_iterate(rb_each, options, mm_i_options, res);
-	if ((t_mm->size + t_mm->offset) > st.st_size) {
-	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
-		     t_mm->size, t_mm->offset);
-	}
-	if (t_mm->size) size = t_mm->size;
-	offset = t_mm->offset;
-    }
-    if (!path) {
-	if (size <= 0) {
-	    rb_raise(rb_eArgError, "length not specified for an anonymous map");
-	}
-	if (offset) {
-	    rb_warning("Ignoring offset for an anonymous map");
-	    offset = 0;
-	}
-    }
-    addr = mmap(0, size, pmode, vscope, fd, offset);
-    if (fd != -1) close(fd);
-    if (addr == MAP_FAILED || !addr) {
-	rb_raise(rb_eArgError, "mmap failed (%x)", addr);
-    }
-    if (t_mm->advice && madvise(addr, size, t_mm->advice) == -1) {
-	rb_raise(rb_eArgError, "madvise(%d)", errno);
-    }
-    t_mm->addr  = addr;
-    t_mm->real = t_mm->len = size;
-    t_mm->pmode = pmode;
-    t_mm->vscope = vscope;
-    t_mm->smode = smode;
-    t_mm->path = (path)?ruby_strdup(path):(char *)-1;
-    if (smode == O_RDONLY) {
-	res = rb_obj_freeze(res);
-	t_mm->frozen |= MM_FROZEN;
-    }
-    else {
-	OBJ_TAINT(res);
-    }
-    rb_obj_call_init(res, argc, argv);
-    return res;
-}
-
-static VALUE
-mm_init(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
-{
-    return obj;
-}
-
 static void
 mm_expandf(t_mm, len)
     mm_mmap *t_mm;
@@ -370,7 +216,12 @@ mm_realloc(t_mm, len)
     long len;
 {
     if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
-    if (len > t_mm->len) mm_expandf(t_mm, len);
+    if (len > t_mm->len) {
+	if ((len - t_mm->len) < t_mm->incr) {
+	    len = t_mm->len + t_mm->incr;
+	}
+	mm_expandf(t_mm, len);
+    }
 }
 
 static VALUE
@@ -378,11 +229,235 @@ mm_extend(obj, a)
     VALUE obj, a;
 {
     mm_mmap *t_mm;
+    long len;
 
     GetMmap(obj, t_mm, MM_MODIFY);
-    mm_realloc(t_mm, t_mm->len + NUM2LONG(a));
+    len = NUM2LONG(a);
+    if (len > 0) {
+	mm_expandf(t_mm, t_mm->len + len);
+    }
     return INT2NUM(t_mm->len);
 }
+
+static VALUE
+mm_i_options(arg, obj)
+    VALUE arg, obj;
+{
+    mm_mmap *t_mm;
+    char *options;
+    VALUE key, value;
+
+    Data_Get_Struct(obj, mm_mmap, t_mm);
+    key = rb_ary_entry(arg, 0);
+    value = rb_ary_entry(arg, 1);
+    key = rb_obj_as_string(key);
+    options = RSTRING(key)->ptr;
+    if (strcmp(options, "length") == 0) {
+	t_mm->size = NUM2INT(value);
+	if (t_mm->size <= 0) {
+	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->size);
+	}
+	t_mm->frozen |= MM_FIXED;
+    }
+    else if (strcmp(options, "offset") == 0) {
+	t_mm->offset = NUM2INT(value);
+	if (t_mm->offset < 0) {
+	    rb_raise(rb_eArgError, "Invalid value for offset %d", t_mm->offset);
+	}
+	t_mm->frozen |= MM_FIXED;
+    }
+    else if (strcmp(options, "advice") == 0) {
+	t_mm->advice = NUM2INT(value);
+    }
+    else if (strcmp(options, "increment") == 0) {
+	t_mm->incr = NUM2INT(value);
+	if (t_mm->incr < 0) {
+	    rb_raise(rb_eArgError, "Invalid value for increment %d", t_mm->incr);
+	}
+    }
+    return Qnil;
+}
+
+
+#if RUBY_VERSION_CODE >= 172
+static VALUE
+mm_s_alloc(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    VALUE res;
+    mm_mmap *t_mm;
+
+    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
+    t_mm->incr = EXP_INCR_SIZE;
+    return res;
+}
+#endif
+
+static VALUE
+#if RUBY_VERSION_CODE >= 172
+mm_init(argc, argv, obj)
+#else
+mm_s_new(argc, argv, obj)
+#endif
+    VALUE obj, *argv;
+    int argc;
+{
+    struct stat st;
+    int fd, smode, pmode, vscope, perm, init;
+    MMAP_RETTYPE addr;
+    VALUE res, fname, vmode, scope, options;
+    mm_mmap *t_mm;
+    char *path, *mode;
+    size_t size;
+    off_t offset;
+
+    options = Qnil;
+    if (argc > 1 && TYPE(argv[argc - 1]) == T_HASH) {
+	options = argv[argc - 1];
+	argc--;
+    }
+    rb_scan_args(argc, argv, "12", &fname, &vmode, &scope);
+    vscope = 0;
+#ifdef MAP_ANON
+    if (NIL_P(fname)) {
+	vscope = MAP_ANON;
+	path = 0;
+    }
+    else {
+	Check_SafeStr(fname);
+	path = RSTRING(fname)->ptr;
+	if (!NIL_P(scope)) {
+	    vscope = NUM2INT(scope);
+	    if (vscope & MAP_ANON) {
+		rb_raise(rb_eArgError, "filename specified for an anonymous map");
+	    }
+	}
+    }
+#else
+    Check_SafeStr(fname);
+    path = RSTRING(fname)->ptr;
+#endif
+    perm = 0666;
+    if (NIL_P(vmode)) {
+	mode = "r";
+    }
+    else if (TYPE(vmode) == T_ARRAY && RARRAY(vmode)->len >= 2) {
+	VALUE tmp = RARRAY(vmode)->ptr[0];
+	mode = STR2CSTR(tmp);
+	perm = NUM2INT(RARRAY(vmode)->ptr[1]);
+    }
+    else {
+	mode = STR2CSTR(vmode);
+    }
+    if (strcmp(mode, "r") == 0) {
+	smode = O_RDONLY;
+	pmode = PROT_READ;
+    }
+    else if (strcmp(mode, "w") == 0) {
+	smode = O_WRONLY;
+	pmode = PROT_WRITE;
+    }
+    else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
+	smode = O_RDWR;
+	pmode = PROT_READ | PROT_WRITE;
+    }
+    else if (strcmp(mode, "a") == 0) {
+	smode = O_RDWR | O_CREAT;
+	pmode = PROT_READ | PROT_WRITE;
+    }
+    else {
+	rb_raise(rb_eArgError, "Invalid mode %s", mode);
+    }
+    vscope |= NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
+    size = 0;
+    if (path) {
+	if ((fd = open(path, smode, perm)) == -1) {
+	    rb_raise(rb_eArgError, "Can't open %s", path);
+	}
+	if (fstat(fd, &st) == -1) {
+	    rb_raise(rb_eArgError, "Can't stat %s", path);
+	}
+	size = st.st_size;
+    }
+    else {
+	fd = -1;
+    }
+#if RUBY_VERSION_CODE >= 172
+    Data_Get_Struct(obj, mm_mmap, t_mm);
+    res = obj;
+#else
+    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
+    t_mm->incr = EXP_INCR_SIZE;
+#endif
+    offset = 0;
+    if (options != Qnil) {
+	rb_iterate(rb_each, options, mm_i_options, res);
+	if ((t_mm->size + t_mm->offset) > st.st_size) {
+	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
+		     t_mm->size, t_mm->offset);
+	}
+	if (t_mm->size) size = t_mm->size;
+	offset = t_mm->offset;
+    }
+    init = 0;
+    if (!path) {
+	if (size <= 0) {
+	    rb_raise(rb_eArgError, "length not specified for an anonymous map");
+	}
+	if (offset) {
+	    rb_warning("Ignoring offset for an anonymous map");
+	    offset = 0;
+	}
+    }
+    else if (size == 0 && (smode & O_RDWR)) {
+	if (lseek(fd, t_mm->incr - 1, SEEK_END) == -1) {
+	    rb_raise(rb_eIOError, "Can't lseek %d", t_mm->incr - 1);
+	}
+	if (write(fd, "\000", 1) != 1) {
+	    rb_raise(rb_eIOError, "Can't extend %s", path);
+	}
+	init = 1;
+	size = t_mm->incr;
+    }
+    addr = mmap(0, size, pmode, vscope, fd, offset);
+    if (fd != -1) close(fd);
+    if (addr == MAP_FAILED || !addr) {
+	rb_raise(rb_eArgError, "mmap failed (%x)", addr);
+    }
+    if (t_mm->advice && madvise(addr, size, t_mm->advice) == -1) {
+	rb_raise(rb_eArgError, "madvise(%d)", errno);
+    }
+    t_mm->addr  = addr;
+    t_mm->len = size;
+    if (!init) t_mm->real = size;
+    t_mm->pmode = pmode;
+    t_mm->vscope = vscope;
+    t_mm->smode = smode;
+    t_mm->path = (path)?ruby_strdup(path):(char *)-1;
+    if (smode == O_RDONLY) {
+	res = rb_obj_freeze(res);
+	t_mm->frozen |= MM_FROZEN;
+    }
+    else {
+	OBJ_TAINT(res);
+    }
+#if RUBY_VERSION_CODE < 172
+    rb_obj_call_init(res, argc, argv);
+#endif
+    return res;
+}
+
+#if RUBY_VERSION_CODE < 171
+static VALUE
+mm_init(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    return obj;
+}
+#endif
+
 
 static VALUE
 mm_msync(argc, argv, obj)
@@ -717,7 +792,7 @@ mm_gsub_bang(argc, argv, obj)
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = END(0);
 	if ((t_mm->real + RSTRING(val)->len - plen) > t_mm->len) {
-	    mm_realloc(t_mm, RSTRING(str)->len + 2 * RSTRING(val)->len);
+	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(val)->len - plen);
 	    RSTRING(str)->ptr = t_mm->addr;
 	}
 	if (RSTRING(val)->len != plen) {
@@ -1559,7 +1634,11 @@ Init_mmap()
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
 
+#if RUBY_VERSION_CODE >= 172
+    rb_define_singleton_method(mm_cMap, "allocate", mm_s_alloc, -1);
+#else
     rb_define_singleton_method(mm_cMap, "new", mm_s_new, -1);
+#endif
     rb_define_singleton_method(mm_cMap, "mlockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "munlockall", mm_munlockall, 0);
