@@ -273,7 +273,7 @@ mm_extend(obj, a)
     if (len > 0) {
 	mm_expandf(t_mm, t_mm->len + len);
     }
-    return INT2NUM(t_mm->len);
+    return UINT2NUM(t_mm->len);
 }
 
 static VALUE
@@ -290,7 +290,7 @@ mm_i_options(arg, obj)
     key = rb_obj_as_string(key);
     options = StringValuePtr(key);
     if (strcmp(options, "length") == 0) {
-	t_mm->len = NUM2INT(value);
+	t_mm->len = NUM2UINT(value);
 	if (t_mm->len <= 0) {
 	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->len);
 	}
@@ -406,8 +406,15 @@ mm_init(argc, argv, obj)
 	if (NIL_P(vmode)) {
 	    mode = "r";
 	}
-	else if (TYPE(vmode) == T_ARRAY && RARRAY(vmode)->len >= 2) {
-	    VALUE tmp = RARRAY(vmode)->ptr[0];
+	else if (rb_respond_to(vmode, rb_intern("to_ary"))) {
+            VALUE tmp;
+
+            vmode = rb_convert_type(vmode, T_ARRAY, "Array", "to_ary");
+            if (RARRAY(vmode)->len != 2) {
+                rb_raise(rb_eArgError, "Invalid length %d (expected 2)",
+                         RARRAY(vmode)->len);
+            }
+	    tmp = RARRAY(vmode)->ptr[0];
 	    mode = StringValuePtr(tmp);
 	    perm = NUM2INT(RARRAY(vmode)->ptr[1]);
 	}
@@ -420,10 +427,7 @@ mm_init(argc, argv, obj)
 	}
 	else if (strcmp(mode, "w") == 0) {
 	    smode = O_RDWR | O_TRUNC;
-	    pmode = PROT_WRITE;
-	    if (!NIL_P(fdv)) {
-		pmode |= PROT_READ;
-	    }
+	    pmode = PROT_READ | PROT_WRITE;
 	}
 	else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
 	    smode = O_RDWR;
@@ -1281,11 +1285,16 @@ mm_equal(a, b)
     VALUE a, b;
 {
     VALUE result;
-    
+    mm_mmap *t_mm, *u_mm;
+
     if (a == b) return Qtrue;
     if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
 	return Qfalse;
 
+    GetMmap(a, t_mm, 0);
+    GetMmap(b, u_mm, 0);
+    if (t_mm->real != u_mm->real)
+        return Qfalse;
     a = mm_str(a, MM_ORIGIN);
     b = mm_str(b, MM_ORIGIN);
     result = rb_funcall2(a, rb_intern("=="), 1, &b);
@@ -1299,11 +1308,16 @@ mm_eql(a, b)
     VALUE a, b;
 {
     VALUE result;
+    mm_mmap *t_mm, *u_mm;
     
     if (a == b) return Qtrue;
     if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
 	return Qfalse;
 
+    GetMmap(a, t_mm, 0);
+    GetMmap(b, u_mm, 0);
+    if (t_mm->real != u_mm->real)
+        return Qfalse;
     a = mm_str(a, MM_ORIGIN);
     b = mm_str(b, MM_ORIGIN);
     result = rb_funcall2(a, rb_intern("eql?"), 1, &b);
@@ -1332,7 +1346,7 @@ mm_size(a)
     mm_mmap *t_mm;
 
     GetMmap(a, t_mm, 0);
-    return INT2NUM(t_mm->real);
+    return UINT2NUM(t_mm->real);
 }
 
 static VALUE
@@ -1722,9 +1736,10 @@ Init_mmap()
 #ifdef MAP_NOSYNC
     rb_define_const(mm_cMap, "MAP_NOSYNC", INT2FIX(MAP_NOSYNC));
 #endif
+#ifdef MCL_CURRENT
     rb_define_const(mm_cMap, "MCL_CURRENT", INT2FIX(MCL_CURRENT));
     rb_define_const(mm_cMap, "MCL_FUTURE", INT2FIX(MCL_FUTURE));
-
+#endif
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
 

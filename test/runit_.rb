@@ -1,6 +1,7 @@
+#:nodoc:all
 begin
    require 'test/unit'
-rescue LoadError
+rescue LoadError 
    require 'runit/testcase'
    require 'runit/cui/testrunner'
 

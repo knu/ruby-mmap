@@ -26,10 +26,10 @@ create_makefile "mmap"
 begin
    make = open("Makefile", "a")
    make.puts "\ntest: $(DLLIB)"
-   Dir.foreach('tests') do |x|
+   Dir.foreach('test') do |x|
       next if /^\./ =~ x || /(_\.rb|~)$/ =~ x
       next if FileTest.directory?(x)
-      make.print "\truby tests/#{x}\n"
+      make.print "\truby test/#{x}\n"
    end
    if unknown
       make.print <<-EOT
@@ -47,22 +47,22 @@ EOT
 
    EOT
    make.print "HTML = mmap.html"
-   docs = Dir['docs/*.rd']
-   docs.each {|x| make.print " \\\n\t#{x.sub(/\.rd$/, '.html')}" }
-   make.print "\n\nRDOC = docs/mmap.rb"
+   doc = Dir['doc/*.rd']
+   doc.each {|x| make.print " \\\n\t#{x.sub(/\.rd$/, '.html')}" }
+   make.print "\n\nRDOC = doc/mmap.rb"
    make.puts
    make.print <<-EOF
 
-rdoc: docs/doc/index.html
+rdoc: doc/doc/index.html
 
-docs/doc/index.html: $(RDOC)
-\t@-(cd docs; rdoc mmap.rb)
+doc/doc/index.html: $(RDOC)
+\t@-(cd doc; rdoc mmap.rb)
 
-ri: docs/mmap.rb
-\t@-(cd docs; rdoc -r mmap.rb)
+ri: doc/mmap.rb
+\t@-(cd doc; rdoc -r mmap.rb)
 
-ri-site: docs/mmap.rb
-\t@-(cd docs; rdoc -R mmap.rb)
+ri-site: doc/mmap.rb
+\t@-(cd doc; rdoc -R mmap.rb)
 
 rd2: html
 
