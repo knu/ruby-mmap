@@ -24,3 +24,9 @@
 * corrected mm_aset (mm_update(str, ...))
 * corrected ==, ===, eql?
 * corrected mm_sub_bang, mm_gsub_bang (to_str)
+
+-- 0.1.6
+
+* adapted for 1.7.2 (mm_str)
+* corrected real for mm_sub_bang
+* protected against old class

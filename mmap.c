@@ -120,6 +120,11 @@ mm_str(obj, modify)
     VALUE ret;
 
     GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
+    if (modify & MM_MODIFY) {
+	if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
+	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
+	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
+    }
 #if RUBY_VERSION_CODE >= 171
     ret = rb_obj_alloc(rb_cString);
     if (rb_obj_tainted(obj)) {
@@ -132,20 +137,21 @@ mm_str(obj, modify)
     else {
 	ret = rb_str_new2("");
     }
-#endif
-    if (modify & MM_MODIFY) {
-	if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
-	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
-	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
-    }
-    if (t_mm->frozen & MM_FROZEN) ret = rb_obj_freeze(ret);
-#if RUBY_VERSION_CODE < 171
     free(RSTRING(ret)->ptr);
 #endif
     RSTRING(ret)->ptr = t_mm->addr;
     RSTRING(ret)->len = t_mm->real;
-    if (modify & MM_ORIGIN)
+    if (modify & MM_ORIGIN) {
+#if RUBY_VERSION_CODE >= 172
+	RSTRING(ret)->aux.shared = ret;
+	FL_SET(ret, ELTS_SHARED);
+#else
 	RSTRING(ret)->orig = ret;
+#endif
+    }
+    if (t_mm->frozen & MM_FROZEN) {
+	ret = rb_obj_freeze(ret);
+    }
     return ret;
 }
 
@@ -302,7 +308,16 @@ mm_s_new(argc, argv, obj)
     else {
 	OBJ_TAINT(res);
     }
+    rb_obj_call_init(res, argc, argv);
     return res;
+}
+
+static VALUE
+mm_init(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    return obj;
 }
 
 static void
@@ -630,7 +645,6 @@ mm_sub_bang(argc, argv, obj)
 	plen = END(0);
 	if (RSTRING(repl)->len > plen) {
 	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(repl)->len - plen);
-	    t_mm->real = t_mm->len;
 	    RSTRING(str)->ptr = t_mm->addr;
 	}
 	if (RSTRING(repl)->len != plen) {
@@ -1497,6 +1511,9 @@ mm_munlock(obj)
 void
 Init_mmap()
 {
+    if (rb_const_defined_at(rb_cObject, rb_intern("Mmap"))) {
+	rb_raise(rb_eNameError, "class already defined");
+    }
     mm_cMap = rb_define_class("Mmap", rb_cObject);
     rb_define_const(mm_cMap, "MS_SYNC", INT2FIX(MS_SYNC));
     rb_define_const(mm_cMap, "MS_ASYNC", INT2FIX(MS_ASYNC));
@@ -1547,6 +1564,8 @@ Init_mmap()
     rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "munlockall", mm_munlockall, 0);
     rb_define_singleton_method(mm_cMap, "unlockall", mm_munlockall, 0);
+
+    rb_define_method(mm_cMap, "initialize", mm_init, -1);
 
     rb_define_method(mm_cMap, "unmap", mm_unmap, 0);
     rb_define_method(mm_cMap, "munmap", mm_unmap, 0);
@@ -1656,6 +1675,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "delete", mm_undefined, -1);
     rb_define_method(mm_cMap, "squeeze", mm_undefined, -1);
     rb_define_method(mm_cMap, "count", mm_count, -1);
+
     rb_define_method(mm_cMap, "tr!", mm_tr_bang, 2);
     rb_define_method(mm_cMap, "tr_s!", mm_tr_s_bang, 2);
     rb_define_method(mm_cMap, "delete!", mm_delete_bang, -1);
