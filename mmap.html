@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<HTML>
+<HEAD>
+<TITLE>mmap.rd</TITLE>
+</HEAD>
+<BODY>
+<H1><A NAME="label:0">Mmap
+</A></H1><!-- RDLabel: "Mmap" -->
+<P>
+<A HREF="ftp://moulon.inra.fr/pub/ruby/">Download</A>
+</P>
+<P>
+The Mmap class implement memory-mapped file objects
+</P>
+<H3><A NAME="label:1">WARNING
+</A></H3><!-- RDLabel: "WARNING" -->
+<P>
+<EM>The variables $' and $` are not available with gsub! and sub!</EM>
+</P>
+<H2><A NAME="label:2">SuperClass
+</A></H2><!-- RDLabel: "SuperClass" -->
+<P>
+Object
+</P>
+<H2><A NAME="label:3">Included Modules
+</A></H2><!-- RDLabel: "Included Modules" -->
+<UL>
+<LI>Comparable
+<LI>Enumerable
+</UL>
+<H2><A NAME="label:4">Class Methods
+</A></H2><!-- RDLabel: "Class Methods" -->
+<DL>
+<DT><A NAME="new"><CODE>new(<var>file</var>, [<var>mode</var> [, <var>protection</var> [, <var>options</var>]]])</CODE></A><!-- RDLabel: "new" -->
+<DD>
+<P>
+create a new object
+</P>
+
+<DL>
+<DT><A NAME="label:7"><VAR>file</VAR>
+</A><!-- RDLabel: "file" -->
+<DD>
+<P>
+Pathname of the file
+</P>
+</DD>
+<DT><A NAME="label:8"><VAR>mode</VAR>
+</A><!-- RDLabel: "mode" -->
+<DD>
+<P>
+Mode to open the file, it can be "r", "w" or "rw"
+</P>
+</DD>
+<DT><A NAME="label:9"><VAR>protection</VAR>
+</A><!-- RDLabel: "protection" -->
+<DD>
+<P>
+specify the nature of the mapping
+</P>
+
+<DL>
+<DT><A NAME="label:11"><VAR>Mmap::MAP_SHARED</VAR>
+</A><!-- RDLabel: "Mmap::MAP_SHARED" -->
+<DD>
+<P>
+Creates a mapping that's shared with all other processes 
+mapping the same areas of the file. 
+The default value is <VAR>Mmap::MAP_SHARED</VAR>
+</P>
+</DD>
+<DT><A NAME="label:12"><VAR>Mmap::MAP_PRIVATE</VAR>
+</A><!-- RDLabel: "Mmap::MAP_PRIVATE" -->
+<DD>
+<P>
+Creates a private copy-on-write mapping, so changes to the
+contents of the mmap object will be private to this process
+</P>
+</DD>
+</DL>
+</DD>
+<DT><A NAME="label:10"><VAR>options</VAR>
+</A><!-- RDLabel: "options" -->
+<DD>
+<P>
+Hash. If one of the options <VAR>length</VAR> or <VAR>offset</VAR>
+is specified it will not possible to modify the size of
+the mapped file.
+</P>
+
+<DL>
+<DT><A NAME="label:13"><VAR>length</VAR>
+</A><!-- RDLabel: "length" -->
+<DD>
+<P>
+Maps <VAR>length</VAR> bytes from the file
+</P>
+</DD>
+<DT><A NAME="label:14"><VAR>offset</VAR>
+</A><!-- RDLabel: "offset" -->
+<DD>
+<P>
+The mapping begin at <VAR>offset</VAR>
+</P>
+</DD>
+<DT><A NAME="label:15"><VAR>advice</VAR>
+</A><!-- RDLabel: "advice" -->
+<DD>
+<P>
+The type of the access (see #madvise)
+</P>
+</DD>
+</DL>
+</DD>
+</DL>
+</DD>
+</DL>
+<H2><A NAME="label:5">Methods
+</A></H2><!-- RDLabel: "Methods" -->
+<DL>
+<DT><A NAME="extend"><CODE>extend(<var>count</var>)</CODE></A><!-- RDLabel: "extend" -->
+<DD>
+<P>
+add <VAR>count</VAR> bytes to the file (i.e. pre-extend the file) 
+</P>
+</DD>
+<DT><A NAME="madvise"><CODE>madvise(<var>advice</var>)</CODE></A><!-- RDLabel: "madvise" -->
+<DD>
+<P>
+<VAR>advice</VAR> can have the value <VAR>Mmap::MADV_NORMAL</VAR>,
+<VAR>Mmap::MADV_RANDOM</VAR>, <VAR>Mmap::MADV_SEQUENTIAL</VAR>,
+<VAR>Mmap::MADV_WILLNEED</VAR>, <VAR>Mmap::MADV_DONTNEED</VAR>
+</P>
+</DD>
+<DT><A NAME="mprotect"><CODE>mprotect(<var>mode</var>)</CODE></A><!-- RDLabel: "mprotect" -->
+<DD>
+<P>
+change the mode, value must be "r", "w" or "rw"
+</P>
+</DD>
+<DT><A NAME="msync"><CODE>msync</CODE></A><!-- RDLabel: "msync" -->
+<DT><A NAME="flush"><CODE>flush</CODE></A><!-- RDLabel: "flush" -->
+<DD>
+<P>
+flush the file
+</P>
+</DD>
+<DT><A NAME="munmap"><CODE>munmap</CODE></A><!-- RDLabel: "munmap" -->
+<DD>
+<P>
+terminate the association
+</P>
+</DD>
+</DL>
+<H3><A NAME="label:6">Other methods with the same syntax than the methods of <VAR>String</VAR>
+</A></H3><!-- RDLabel: "Other methods with the same syntax than the methods ofString" -->
+<P>
+self == other 
+</P>
+<P>
+self &gt; other 
+</P>
+<P>
+self &gt;= other 
+</P>
+<P>
+self &lt; other 
+</P>
+<P>
+self &lt;= other 
+</P>
+<P>
+self === other 
+</P>
+<P>
+self &lt;&lt; other 
+</P>
+<P>
+self =~ other 
+</P>
+<P>
+self[nth] 
+</P>
+<P>
+self[start..last] 
+</P>
+<P>
+self[start, length] 
+</P>
+<P>
+self[nth] = val 
+</P>
+<P>
+self[start..last] = val 
+</P>
+<P>
+self[start, len] = val 
+</P>
+<P>
+self &lt;=&gt; other 
+</P>
+<P>
+&lt;&lt;(other) 
+</P>
+<P>
+concat(other) 
+</P>
+<P>
+capitalize! 
+</P>
+<P>
+chop! 
+</P>
+<P>
+chomp!([rs]) 
+</P>
+<P>
+crypt(salt) 
+</P>
+<P>
+delete!(str) 
+</P>
+<P>
+downcase! 
+</P>
+<P>
+each_byte {|char|...} 
+</P>
+<P>
+each([rs]) {|line|...} 
+</P>
+<P>
+each_line([rs]) {|line|...} 
+</P>
+<P>
+empty? 
+</P>
+<P>
+freeze 
+</P>
+<P>
+frozen 
+</P>
+<P>
+gsub!(pattern, replace) 
+</P>
+<P>
+gsub!(pattern) {...}
+</P>
+<P>
+include?(other) 
+</P>
+<P>
+index(substr[, pos]) 
+</P>
+<P>
+length 
+</P>
+<P>
+reverse! 
+</P>
+<P>
+rindex(substr[, pos]) 
+</P>
+<P>
+scan(pattern) 
+</P>
+<P>
+scan(pattern) {...} 
+</P>
+<P>
+size 
+</P>
+<P>
+split([sep[, limit]]) 
+</P>
+<P>
+squeeze!([str]) 
+</P>
+<P>
+strip! 
+</P>
+<P>
+sub!(pattern, replace) 
+</P>
+<P>
+sub!(pattern) {...} 
+</P>
+<P>
+sum([bits]) 
+</P>
+<P>
+swapcase! 
+</P>
+<P>
+tr!(search, replace) 
+</P>
+<P>
+tr_s!(search, replace) 
+</P>
+<P>
+upcase! 
+</P>
+
+</BODY>
+</HTML>
