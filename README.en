@@ -11,7 +11,13 @@
 
     See mmap.rd, mmap.html
 
- This extension module is copyrighted free software by Guy Decoux
+ * Tests : if you have rubyunit
+
+   make test
+ 
+ * Copying
+
+  This extension module is copyrighted free software by Guy Decoux
 
  You can redistribute it and/or modify it under the same term as
  Ruby.

@@ -907,6 +907,8 @@ mm_concat(str1, str2)
     return str1;
 }
 
+#if RUBY_VERSION_CODE < 171
+
 static VALUE
 mm_strip_bang(str)
     VALUE str;
@@ -939,6 +941,69 @@ mm_strip_bang(str)
 
     return str;
 }
+
+#else
+
+static VALUE
+mm_lstrip_bang(str)
+    VALUE str;
+{
+    char *s, *t, *e;
+    mm_mmap *t_mm;
+
+    GetMmap(str, t_mm, MM_MODIFY);
+    s = (char *)t_mm->addr;
+    e = t = s + t_mm->real;
+    while (s < t && ISSPACE(*s)) s++;
+
+    if (t_mm->real != (t - s) && (t_mm->frozen & MM_FIXED)) {
+	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
+    }
+    t_mm->real = t - s;
+    if (s > (char *)t_mm->addr) { 
+	memmove(t_mm->addr, s, t_mm->real);
+	((char *)t_mm->addr)[t_mm->real] = '\0';
+	return str;
+    }
+    return Qnil;
+}
+
+static VALUE
+mm_rstrip_bang(str)
+    VALUE str;
+{
+    char *s, *t, *e;
+    mm_mmap *t_mm;
+
+    GetMmap(str, t_mm, MM_MODIFY);
+    s = (char *)t_mm->addr;
+    e = t = s + t_mm->real;
+    t--;
+    while (s <= t && ISSPACE(*t)) t--;
+    t++;
+    if (t_mm->real != (t - s) && (t_mm->frozen & MM_FIXED)) {
+	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
+    }
+    t_mm->real = t - s;
+    if (t < e) {
+	((char *)t_mm->addr)[t_mm->real] = '\0';
+	return str;
+    }
+    return Qnil;
+}
+
+static VALUE
+mm_strip_bang(str)
+    VALUE str;
+{
+    VALUE l = mm_lstrip_bang(str);
+    VALUE r = mm_str_rstrip_bang(str);
+
+    if (NIL_P(l) && NIL_P(r)) return Qnil;
+    return str;
+}
+
+#endif
 
 #define MmapStr(b, recycle)						\
 do {									\
@@ -1079,7 +1144,7 @@ mm_bang_i(obj, flag, id, argc, argv)
     if (res == Qnil) return res;
     GetMmap(obj, t_mm, 0);
     t_mm->real = RSTRING(str)->len;
-    return res;
+    return (flag & MM_ORIGIN)?res:obj;
 
 }
 
@@ -1424,7 +1489,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "unlock", mm_munlock, 0);
 
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
-    rb_define_method(mm_cMap, "freeze", mm_freeze, 1);
+    rb_define_method(mm_cMap, "freeze", mm_freeze, 0);
     rb_define_method(mm_cMap, "clone", mm_undefined, -1);
     rb_define_method(mm_cMap, "dup", mm_undefined, -1);
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
@@ -1497,10 +1562,18 @@ Init_mmap()
     rb_define_method(mm_cMap, "chop", mm_undefined, -1);
     rb_define_method(mm_cMap, "chomp", mm_undefined, -1);
     rb_define_method(mm_cMap, "strip", mm_undefined, -1);
+#if RUBY_VERSION_CODE >= 171
+    rb_define_method(mm_cMap, "lstrip", mm_undefined, -1);
+    rb_define_method(mm_cMap, "rstrip", mm_undefined, -1);
+#endif
 
     rb_define_method(mm_cMap, "sub!", mm_sub_bang, -1);
     rb_define_method(mm_cMap, "gsub!", mm_gsub_bang, -1);
-    rb_define_method(mm_cMap, "strip!", mm_strip_bang, -1);
+    rb_define_method(mm_cMap, "strip!", mm_strip_bang, 0);
+#if RUBY_VERSION_CODE >= 171
+    rb_define_method(mm_cMap, "lstrip!", mm_lstrip_bang, 0);
+    rb_define_method(mm_cMap, "rstrip!", mm_rstrip_bang, 0);
+#endif
     rb_define_method(mm_cMap, "chop!", mm_chop_bang, 0);
     rb_define_method(mm_cMap, "chomp!", mm_chomp_bang, -1);
 

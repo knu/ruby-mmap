@@ -11,3 +11,9 @@
 * added #insert, #casecmp (>= 171)
 * corrected NEW2LONG
 
+-- 0.1.4
+
+* added #lstrip!, #rstrip! for 1.7.1
+* corrected strip!
+* corrected mm_bang_i (reverse!, etc)
+* added a small test (make test)
