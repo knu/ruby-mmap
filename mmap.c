@@ -8,6 +8,17 @@
 #include <intern.h>
 #include "version.h"
 
+#ifndef MADV_NORMAL
+#ifdef POSIX_MADV_NORMAL
+#define MADV_NORMAL     POSIX_MADV_NORMAL 
+#define MADV_RANDOM     POSIX_MADV_RANDOM 
+#define MADV_SEQUENTIAL POSIX_MADV_SEQUENTIAL
+#define MADV_WILLNEED   POSIX_MADV_WILLNEED
+#define MADV_DONTNEED   POSIX_MADV_DONTNEED
+#define madvise posix_madvise
+#endif
+#endif
+
 #include <re.h>
 
 #define BEG(no) regs->beg[no]
@@ -40,8 +51,7 @@ typedef struct {
     MMAP_RETTYPE addr;
     int smode, pmode, vscope;
     int advice, frozen, lock;
-    size_t len, real;
-    size_t size, incr;
+    size_t len, real, incr;
     off_t offset;
     char *path;
 } mm_mmap;
@@ -201,9 +211,11 @@ mm_expandf(t_mm, len)
     if (t_mm->addr == MAP_FAILED) {
 	rb_raise(rb_eArgError, "mmap failed");
     }
+#ifdef MADV_NORMAL
     if (t_mm->advice && madvise(t_mm->addr, len, t_mm->advice) == -1) {
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
+#endif
     if (t_mm->lock && mlock(t_mm->addr, len) == -1) {
 	rb_raise(rb_eArgError, "mlock(%d)", errno);
     }
@@ -253,9 +265,9 @@ mm_i_options(arg, obj)
     key = rb_obj_as_string(key);
     options = RSTRING(key)->ptr;
     if (strcmp(options, "length") == 0) {
-	t_mm->size = NUM2INT(value);
-	if (t_mm->size <= 0) {
-	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->size);
+	t_mm->len = NUM2INT(value);
+	if (t_mm->len <= 0) {
+	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->len);
 	}
 	t_mm->frozen |= MM_FIXED;
     }
@@ -309,7 +321,7 @@ mm_s_new(argc, argv, obj)
     VALUE res, fname, vmode, scope, options;
     mm_mmap *t_mm;
     char *path, *mode;
-    size_t size;
+    size_t size = 0;
     off_t offset;
 
     options = Qnil;
@@ -321,7 +333,7 @@ mm_s_new(argc, argv, obj)
     vscope = 0;
 #ifdef MAP_ANON
     if (NIL_P(fname)) {
-	vscope = MAP_ANON;
+	vscope = MAP_ANON | MAP_SHARED;
 	path = 0;
     }
     else {
@@ -338,40 +350,40 @@ mm_s_new(argc, argv, obj)
     Check_SafeStr(fname);
     path = RSTRING(fname)->ptr;
 #endif
-    perm = 0666;
-    if (NIL_P(vmode)) {
-	mode = "r";
-    }
-    else if (TYPE(vmode) == T_ARRAY && RARRAY(vmode)->len >= 2) {
-	VALUE tmp = RARRAY(vmode)->ptr[0];
-	mode = STR2CSTR(tmp);
-	perm = NUM2INT(RARRAY(vmode)->ptr[1]);
-    }
-    else {
-	mode = STR2CSTR(vmode);
-    }
-    if (strcmp(mode, "r") == 0) {
-	smode = O_RDONLY;
-	pmode = PROT_READ;
-    }
-    else if (strcmp(mode, "w") == 0) {
-	smode = O_WRONLY;
-	pmode = PROT_WRITE;
-    }
-    else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
-	smode = O_RDWR;
-	pmode = PROT_READ | PROT_WRITE;
-    }
-    else if (strcmp(mode, "a") == 0) {
-	smode = O_RDWR | O_CREAT;
-	pmode = PROT_READ | PROT_WRITE;
-    }
-    else {
-	rb_raise(rb_eArgError, "Invalid mode %s", mode);
-    }
     vscope |= NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
     size = 0;
+    perm = 0666;
     if (path) {
+	if (NIL_P(vmode)) {
+	    mode = "r";
+	}
+	else if (TYPE(vmode) == T_ARRAY && RARRAY(vmode)->len >= 2) {
+	    VALUE tmp = RARRAY(vmode)->ptr[0];
+	    mode = STR2CSTR(tmp);
+	    perm = NUM2INT(RARRAY(vmode)->ptr[1]);
+	}
+	else {
+	    mode = STR2CSTR(vmode);
+	}
+	if (strcmp(mode, "r") == 0) {
+	    smode = O_RDONLY;
+	    pmode = PROT_READ;
+	}
+	else if (strcmp(mode, "w") == 0) {
+	    smode = O_WRONLY;
+	    pmode = PROT_WRITE;
+	}
+	else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
+	    smode = O_RDWR;
+	    pmode = PROT_READ | PROT_WRITE;
+	}
+	else if (strcmp(mode, "a") == 0) {
+	    smode = O_RDWR | O_CREAT;
+	    pmode = PROT_READ | PROT_WRITE;
+	}
+	else {
+	    rb_raise(rb_eArgError, "Invalid mode %s", mode);
+	}
 	if ((fd = open(path, smode, perm)) == -1) {
 	    rb_raise(rb_eArgError, "Can't open %s", path);
 	}
@@ -382,6 +394,9 @@ mm_s_new(argc, argv, obj)
     }
     else {
 	fd = -1;
+	if (!NIL_P(vmode) && TYPE(vmode) != T_STRING) {
+	    size = NUM2INT(vmode);
+	}
     }
 #if RUBY_VERSION_CODE >= 172
     Data_Get_Struct(obj, mm_mmap, t_mm);
@@ -393,11 +408,11 @@ mm_s_new(argc, argv, obj)
     offset = 0;
     if (options != Qnil) {
 	rb_iterate(rb_each, options, mm_i_options, res);
-	if ((t_mm->size + t_mm->offset) > st.st_size) {
+	if (path && (t_mm->len + t_mm->offset) > st.st_size) {
 	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
-		     t_mm->size, t_mm->offset);
+		     t_mm->len, t_mm->offset);
 	}
-	if (t_mm->size) size = t_mm->size;
+	if (t_mm->len) size = t_mm->len;
 	offset = t_mm->offset;
     }
     init = 0;
@@ -409,6 +424,9 @@ mm_s_new(argc, argv, obj)
 	    rb_warning("Ignoring offset for an anonymous map");
 	    offset = 0;
 	}
+	smode = O_RDWR;
+	pmode = PROT_READ | PROT_WRITE;
+	t_mm->frozen |= MM_FIXED;
     }
     else if (size == 0 && (smode & O_RDWR)) {
 	if (lseek(fd, t_mm->incr - 1, SEEK_END) == -1) {
@@ -425,9 +443,11 @@ mm_s_new(argc, argv, obj)
     if (addr == MAP_FAILED || !addr) {
 	rb_raise(rb_eArgError, "mmap failed (%x)", addr);
     }
+#ifdef MADV_NORMAL
     if (t_mm->advice && madvise(addr, size, t_mm->advice) == -1) {
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
+#endif
     t_mm->addr  = addr;
     t_mm->len = size;
     if (!init) t_mm->real = size;
@@ -526,6 +546,7 @@ mm_mprotect(obj, a)
     return obj;
 }
 
+#ifdef MADV_NORMAL
 static VALUE
 mm_madvise(obj, a)
     VALUE obj, a;
@@ -539,6 +560,7 @@ mm_madvise(obj, a)
     t_mm->advice = NUM2INT(a);
     return Qnil;
 }
+#endif
 
 #define StringMmap(b, bp, bl)						   \
 do {									   \
@@ -992,7 +1014,13 @@ mm_slice_bang(argc, argv, str)
     }
     buf[i] = rb_str_new(0,0);
     result = mm_aref_m(argc, buf, str);
-    mm_aset_m(argc+1, buf, str);
+#if RUBY_VERSION_CODE >= 172
+    if (!NIL_P(result)) {
+#endif
+	mm_aset_m(argc+1, buf, str);
+#if RUBY_VERSION_CODE >= 172
+    }
+#endif
     return result;
 }
 
@@ -1599,11 +1627,13 @@ Init_mmap()
     rb_define_const(mm_cMap, "PROT_NONE", INT2FIX(PROT_NONE));
     rb_define_const(mm_cMap, "MAP_SHARED", INT2FIX(MAP_SHARED));
     rb_define_const(mm_cMap, "MAP_PRIVATE", INT2FIX(MAP_PRIVATE));
+#ifdef MADV_NORMAL
     rb_define_const(mm_cMap, "MADV_NORMAL", INT2FIX(MADV_NORMAL));
     rb_define_const(mm_cMap, "MADV_RANDOM", INT2FIX(MADV_RANDOM));
     rb_define_const(mm_cMap, "MADV_SEQUENTIAL", INT2FIX(MADV_SEQUENTIAL));
     rb_define_const(mm_cMap, "MADV_WILLNEED", INT2FIX(MADV_WILLNEED));
     rb_define_const(mm_cMap, "MADV_DONTNEED", INT2FIX(MADV_DONTNEED));
+#endif
 #ifdef MAP_DENYWRITE
     rb_define_const(mm_cMap, "MAP_DENYWRITE", INT2FIX(MAP_DENYWRITE));
 #endif
@@ -1653,8 +1683,10 @@ Init_mmap()
     rb_define_method(mm_cMap, "flush", mm_msync, -1);
     rb_define_method(mm_cMap, "mprotect", mm_mprotect, 1);
     rb_define_method(mm_cMap, "protect", mm_mprotect, 1);
+#ifdef MADV_NORMAL
     rb_define_method(mm_cMap, "madvise", mm_madvise, 1);
     rb_define_method(mm_cMap, "advise", mm_madvise, 1);
+#endif
     rb_define_method(mm_cMap, "mlock", mm_mlock, 0);
     rb_define_method(mm_cMap, "lock", mm_mlock, 0);
     rb_define_method(mm_cMap, "munlock", mm_munlock, 0);

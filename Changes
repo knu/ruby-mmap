@@ -37,3 +37,10 @@
 * added "a" for ::new
 * experimental EXP_INCR_SIZE (4096) ("increment" => 4096)
 * tests for RUNIT/Test::Unit
+
+-- 0.1.8
+
+* test for madvise(2)
+* don't test size for MAP_ANON
+* added syntax Mmap(nil, length)
+* documentation : make rd2; make rdoc

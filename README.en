@@ -9,6 +9,9 @@
 
  * Documentation
 
+    make rd2
+    make rdoc
+
     See mmap.rd, mmap.html
 
  * Tests : if you have rubyunit

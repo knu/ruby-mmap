@@ -2,16 +2,11 @@
 $LOAD_PATH.unshift *%w{.. . tests}
 require 'mmap'
 require 'ftools'
-begin
-   require 'test/unit'
-   Inh = Test::Unit
-rescue LoadError
-   require 'runit/testcase'
-   require 'runit/cui/testrunner'
-   Inh = RUNIT
-end
+require 'runit_'
 
 $mmap, $str = nil, nil
+
+Inh = defined?(RUNIT) ? RUNIT : Test::Unit
 
 class TestMmap < Inh::TestCase
    def internal_init
@@ -70,7 +65,7 @@ class TestMmap < Inh::TestCase
 	    eval "$mmap#{access}"
 	 rescue IndexError, RangeError
 	 else
-	    assert_fail("*must* fail with IndexError")
+	    flunk("*must* fail with IndexError")
 	 end
       else
 	 eval "$mmap#{access}"
@@ -114,7 +109,7 @@ class TestMmap < Inh::TestCase
 	    eval "$mmap#{access}"
 	 rescue IndexError, RangeError
 	 else
-	    assert_fail("*must* fail with IndexError")
+	    flunk("*must* fail with IndexError")
 	 end
       else
 	 eval "$mmap#{access}"

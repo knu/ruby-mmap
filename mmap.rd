@@ -3,10 +3,12 @@
 
 ((<Download|URL:ftp://moulon.inra.fr/pub/ruby/>))
 
+#^
 The Mmap class implement memory-mapped file objects
 
 === WARNING
-((*The variables $' and $` are not available with gsub! and sub!*))
+=== The variables $' and $` are not available with gsub! and sub!
+#^
 
 == SuperClass
 
@@ -16,15 +18,19 @@ Object
 
 * Comparable
 * Enumerable
-
+# class Mmap
+#  include Comparable
+#  include Enumerable
+#  class << self
 == Class Methods
 
 --- lockall(flag)
       disable paging of all pages mapped. ((|flag|)) can be 
       ((|Mmap::MCL_CURRENT|)) or ((|Mmap::MCL_FUTURE|))
 
---- new(file, [mode [, protection [, options]]])
-      create a new object
+--- new(file, mode = "r", protection = Mmap::MAP_SHARED, options = {})
+--- new(nil, length, protection = Mmap::MAP_SHARED, options = {})
+      create a new Mmap object
 
         : ((|file|))
             Pathname of the file, if ((|nil|)) is given an anonymous map
@@ -63,6 +69,7 @@ Object
 --- unlockall
      reenable paging
 
+#  end
 == Methods
 
 --- extend(count)
@@ -89,114 +96,115 @@ Object
 --- munmap
      terminate the association
 
-=== Other methods with the same syntax than the methods of ((|String|))
+=== Other methods with the same syntax than for the class String
 
-self == other 
 
-self > other 
+--- self == other 
 
-self >= other 
+--- self > other 
 
-self < other 
+--- self >= other 
 
-self <= other 
+--- self < other 
 
-self === other 
+--- self <= other 
 
-self << other 
+--- self === other 
 
-self =~ other 
+--- self << other 
 
-self[nth] 
+--- self =~ other 
 
-self[start..last] 
+--- self[nth] 
 
-self[start, length] 
+--- self[start..last] 
 
-self[nth] = val 
+--- self[start, length] 
 
-self[start..last] = val 
+--- self[nth] = val 
 
-self[start, len] = val 
+--- self[start..last] = val 
 
-self <=> other 
+--- self[start, len] = val 
 
-<<(other) 
+--- self <=> other 
 
-casecmp(other)   >= 1.7.1
+--- <<(other) 
 
-concat(other) 
+--- casecmp(other)   >= 1.7.1
 
-capitalize! 
+--- concat(other) 
 
-chop! 
+--- capitalize! 
 
-chomp!([rs]) 
+--- chop! 
 
-count(o1 [, o2, ...])
+--- chomp!([rs]) 
 
-crypt(salt) 
+--- count(o1 [, o2, ...])
 
-delete!(str) 
+--- crypt(salt) 
 
-downcase! 
+--- delete!(str) 
 
-each_byte {|char|...} 
+--- downcase! 
 
-each([rs]) {|line|...} 
+--- each_byte {|char|...} 
 
-each_line([rs]) {|line|...} 
+--- each([rs]) {|line|...} 
 
-empty? 
+--- each_line([rs]) {|line|...} 
 
-freeze 
+--- empty? 
 
-frozen 
+--- freeze 
 
-gsub!(pattern, replace) 
+--- frozen 
 
-gsub!(pattern) {...}
+--- gsub!(pattern, replace) 
 
-include?(other) 
+--- gsub!(pattern) {|str|...}
 
-index(substr[, pos]) 
+--- include?(other) 
 
-insert(index, str) >= 1.7.1
+--- index(substr[, pos]) 
 
-length 
+--- insert(index, str) >= 1.7.1
 
-reverse! 
+--- length 
 
-rindex(substr[, pos]) 
+--- reverse! 
 
-scan(pattern) 
+--- rindex(substr[, pos]) 
 
-scan(pattern) {...} 
+--- scan(pattern) 
 
-size 
+--- scan(pattern) {|str| ...} 
 
-slice
+--- size 
 
-slice!
+--- slice
 
-split([sep[, limit]]) 
+--- slice!
 
-squeeze!([str]) 
+--- split([sep[, limit]]) 
 
-strip! 
+--- squeeze!([str]) 
 
-sub!(pattern, replace) 
+--- strip! 
 
-sub!(pattern) {...} 
+--- sub!(pattern, replace) 
 
-sum([bits]) 
+--- sub!(pattern) {|str| ...} 
 
-swapcase! 
+--- sum([bits]) 
 
-tr!(search, replace) 
+--- swapcase! 
 
-tr_s!(search, replace) 
+--- tr!(search, replace) 
 
-upcase! 
+--- tr_s!(search, replace) 
+
+--- upcase! 
 
 =end
