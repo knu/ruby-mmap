@@ -100,111 +100,160 @@ Object
 
 
 --- self == other 
+    comparison
 
 --- self > other 
+    comparison
 
 --- self >= other 
+    comparison
 
 --- self < other 
+    comparison
 
 --- self <= other 
+    comparison
 
 --- self === other 
+    used for ((|case|)) comparison
 
 --- self << other 
+    append ((|other|)) to ((|self|))
 
---- self =~ other 
+--- self =~ other
+    return an index of the match 
 
 --- self[nth] 
+    retrieve the ((|nth|)) character
 
 --- self[start..last] 
+    return a substring from ((|start|)) to ((|last|))
 
---- self[start, length] 
+--- self[start, length]
+    return a substring of ((|lenght|)) characters from ((|start|)) 
 
 --- self[nth] = val 
+    change the ((|nth|)) character with ((|val|))
 
 --- self[start..last] = val 
+    change substring from ((|start|)) to ((|last|)) with ((|val|))
 
 --- self[start, len] = val 
+    replace ((|length|)) characters from ((|start|)) with ((|val|)).
 
 --- self <=> other 
-
---- <<(other) 
+    comparison : return -1, 0, 1
 
 --- casecmp(other)   >= 1.7.1
 
 --- concat(other) 
+    append the contents of ((|other|))
 
---- capitalize! 
+--- capitalize!
+    change the first character to uppercase letter
 
 --- chop! 
+    chop off the last character
 
 --- chomp!([rs]) 
+    chop off the  line ending character, specified by ((|rs|))
 
 --- count(o1 [, o2, ...])
+    each parameter defines a set of character to count
 
---- crypt(salt) 
+--- crypt(salt)
+    crypt with ((|salt|)) 
 
 --- delete!(str) 
+    delete every characters included in ((|str|))
 
 --- downcase! 
+    change all uppercase character to lowercase character
 
 --- each_byte {|char|...} 
+    iterate on each byte
 
 --- each([rs]) {|line|...} 
-
 --- each_line([rs]) {|line|...} 
+    iterate on each line
 
 --- empty? 
+    return ((|true|)) if the file is empty
 
---- freeze 
+--- freeze
+    freeze the current file 
 
 --- frozen 
+    return ((|true|)) if the file is frozen
 
 --- gsub!(pattern, replace) 
+    global substitution
 
 --- gsub!(pattern) {|str|...}
+    global substitution
 
 --- include?(other) 
+    return ((|true|)) if ((|other|)) is found
 
---- index(substr[, pos]) 
+--- index(substr[, pos])
+    return the index of ((|substr|)) 
 
 --- insert(index, str) >= 1.7.1
+    insert ((|str|)) at ((|index|))
 
 --- length 
+    return the size of the file
 
---- reverse! 
+--- reverse!
+    reverse the content of the file 
 
 --- rindex(substr[, pos]) 
+    return the index of the last occurrence of ((|substr|))
 
---- scan(pattern) 
+--- scan(pattern)
+    return an array of all occurence matched by ((|pattern|)) 
 
 --- scan(pattern) {|str| ...} 
+    iterate through the file, matching the ((|pattern|))
 
 --- size 
+    return the size of the file
 
 --- slice
+    same than ((|[]|))
 
 --- slice!
+    delete the specified portion of the file
 
 --- split([sep[, limit]]) 
+    splits into a list of strings and return this array
 
 --- squeeze!([str]) 
+    squeezes sequences of the same characters which is included in ((|str|))
 
 --- strip! 
+    removes leading and trailing whitespace
 
---- sub!(pattern, replace) 
+--- sub!(pattern, replace)
+    substitution 
 
 --- sub!(pattern) {|str| ...} 
+    substitution
 
 --- sum([bits]) 
+    return a checksum
 
 --- swapcase! 
+    replaces all lowercase characters to uppercase characters, and vice-versa
 
---- tr!(search, replace) 
+--- tr!(search, replace)
+    translate the character from ((|search|)) to ((|replace|)) 
 
 --- tr_s!(search, replace) 
+    translate the character from ((|search|)) to ((|replace|)), then
+    squeeze sequence of the same characters 
 
 --- upcase! 
+    replaces all lowercase characters to downcase characters
 
 =end

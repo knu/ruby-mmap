@@ -128,60 +128,162 @@ the mapped file.</p>
 </dl>
 <h3><a name="label:28" id="label:28">Other methods with the same syntax than for the class String</a></h3><!-- RDLabel: "Other methods with the same syntax than for the class String" -->
 <dl>
-<dt><a name="label:29" id="label:29"><code><var>self</var> == <var>other</var></code></a><!-- RDLabel: "self == other" -->
-<dt><a name="label:30" id="label:30"><code><var>self</var> &gt; <var>other</var></code></a><!-- RDLabel: "self > other" -->
-<dt><a name="label:31" id="label:31"><code><var>self</var> &gt;= <var>other</var></code></a><!-- RDLabel: "self >= other" -->
-<dt><a name="label:32" id="label:32"><code><var>self</var> &lt; <var>other</var></code></a><!-- RDLabel: "self < other" -->
-<dt><a name="label:33" id="label:33"><code><var>self</var> &lt;= <var>other</var></code></a><!-- RDLabel: "self <= other" -->
-<dt><a name="label:34" id="label:34"><code><var>self</var> === <var>other</var></code></a><!-- RDLabel: "self === other" -->
-<dt><a name="label:35" id="label:35"><code><var>self</var> &lt;&lt; <var>other</var></code></a><!-- RDLabel: "self << other" -->
-<dt><a name="label:36" id="label:36"><code><var>self</var> =~ <var>other</var></code></a><!-- RDLabel: "self =~ other" -->
-<dt><a name="label:37" id="label:37"><code>self[nth]</code></a><!-- RDLabel: "self[nth]" -->
-<dt><a name="label:38" id="label:38"><code>self[start..last]</code></a><!-- RDLabel: "self[start..last]" -->
-<dt><a name="label:39" id="label:39"><code>self[start, <var>length</var>]</code></a><!-- RDLabel: "self[start, length]" -->
-<dt><a name="label:40" id="label:40"><code>self[nth] = <var>val</var></code></a><!-- RDLabel: "self[nth] = val" -->
-<dt><a name="label:41" id="label:41"><code>self[start..last] = <var>val</var></code></a><!-- RDLabel: "self[start..last] = val" -->
-<dt><a name="label:42" id="label:42"><code>self[start, <var>len</var>] = <var>val</var></code></a><!-- RDLabel: "self[start, len] = val" -->
-<dt><a name="label:43" id="label:43"><code><var>self</var> &lt;=&gt; <var>other</var></code></a><!-- RDLabel: "self <=> other" -->
-<dt><a name="label:44" id="label:44"><code>&lt;&lt;(<var>other</var>)</code></a><!-- RDLabel: "<<" -->
-<dt><a name="label:45" id="label:45"><code>casecmp(<var>other</var>)   &gt;= <var>1</var>.<var>7</var>.<var>1</var></code></a><!-- RDLabel: "casecmp" -->
-<dt><a name="label:46" id="label:46"><code>concat(<var>other</var>)</code></a><!-- RDLabel: "concat" -->
-<dt><a name="label:47" id="label:47"><code>capitalize!</code></a><!-- RDLabel: "capitalize!" -->
-<dt><a name="label:48" id="label:48"><code>chop!</code></a><!-- RDLabel: "chop!" -->
-<dt><a name="label:49" id="label:49"><code>chomp!([<var>rs</var>])</code></a><!-- RDLabel: "chomp!" -->
-<dt><a name="label:50" id="label:50"><code>count(<var>o1</var> [, <var>o2</var>, ...])</code></a><!-- RDLabel: "count" -->
-<dt><a name="label:51" id="label:51"><code>crypt(<var>salt</var>)</code></a><!-- RDLabel: "crypt" -->
-<dt><a name="label:52" id="label:52"><code>delete!(<var>str</var>)</code></a><!-- RDLabel: "delete!" -->
-<dt><a name="label:53" id="label:53"><code>downcase!</code></a><!-- RDLabel: "downcase!" -->
-<dt><a name="label:54" id="label:54"><code>each_byte {|<var>char</var>|...}</code></a><!-- RDLabel: "each_byte" -->
-<dt><a name="label:55" id="label:55"><code>each([<var>rs</var>]) {|<var>line</var>|...}</code></a><!-- RDLabel: "each" -->
-<dt><a name="label:56" id="label:56"><code>each_line([<var>rs</var>]) {|<var>line</var>|...}</code></a><!-- RDLabel: "each_line" -->
-<dt><a name="label:57" id="label:57"><code>empty?</code></a><!-- RDLabel: "empty?" -->
-<dt><a name="label:58" id="label:58"><code>freeze</code></a><!-- RDLabel: "freeze" -->
-<dt><a name="label:59" id="label:59"><code>frozen</code></a><!-- RDLabel: "frozen" -->
-<dt><a name="label:60" id="label:60"><code>gsub!(<var>pattern</var>, <var>replace</var>)</code></a><!-- RDLabel: "gsub!" -->
-<dt><a name="label:61" id="label:61"><code>gsub!(<var>pattern</var>) {|<var>str</var>|...}</code></a><!-- RDLabel: "gsub!" -->
-<dt><a name="label:62" id="label:62"><code>include?(<var>other</var>)</code></a><!-- RDLabel: "include?" -->
-<dt><a name="label:63" id="label:63"><code>index(<var>substr</var>[, <var>pos</var>])</code></a><!-- RDLabel: "index" -->
-<dt><a name="label:64" id="label:64"><code>insert(<var>index</var>, <var>str</var>) &gt;= <var>1</var>.<var>7</var>.<var>1</var></code></a><!-- RDLabel: "insert" -->
-<dt><a name="label:65" id="label:65"><code>length</code></a><!-- RDLabel: "length" -->
-<dt><a name="label:66" id="label:66"><code>reverse!</code></a><!-- RDLabel: "reverse!" -->
-<dt><a name="label:67" id="label:67"><code>rindex(<var>substr</var>[, <var>pos</var>])</code></a><!-- RDLabel: "rindex" -->
-<dt><a name="label:68" id="label:68"><code>scan(<var>pattern</var>)</code></a><!-- RDLabel: "scan" -->
-<dt><a name="label:69" id="label:69"><code>scan(<var>pattern</var>) {|<var>str</var>| ...}</code></a><!-- RDLabel: "scan" -->
-<dt><a name="label:70" id="label:70"><code>size</code></a><!-- RDLabel: "size" -->
-<dt><a name="label:71" id="label:71"><code>slice</code></a><!-- RDLabel: "slice" -->
-<dt><a name="label:72" id="label:72"><code>slice!</code></a><!-- RDLabel: "slice!" -->
-<dt><a name="label:73" id="label:73"><code>split([<var>sep</var>[, <var>limit</var>]])</code></a><!-- RDLabel: "split" -->
-<dt><a name="label:74" id="label:74"><code>squeeze!([<var>str</var>])</code></a><!-- RDLabel: "squeeze!" -->
-<dt><a name="label:75" id="label:75"><code>strip!</code></a><!-- RDLabel: "strip!" -->
-<dt><a name="label:76" id="label:76"><code>sub!(<var>pattern</var>, <var>replace</var>)</code></a><!-- RDLabel: "sub!" -->
-<dt><a name="label:77" id="label:77"><code>sub!(<var>pattern</var>) {|<var>str</var>| ...}</code></a><!-- RDLabel: "sub!" -->
-<dt><a name="label:78" id="label:78"><code>sum([<var>bits</var>])</code></a><!-- RDLabel: "sum" -->
-<dt><a name="label:79" id="label:79"><code>swapcase!</code></a><!-- RDLabel: "swapcase!" -->
-<dt><a name="label:80" id="label:80"><code>tr!(<var>search</var>, <var>replace</var>)</code></a><!-- RDLabel: "tr!" -->
-<dt><a name="label:81" id="label:81"><code>tr_s!(<var>search</var>, <var>replace</var>)</code></a><!-- RDLabel: "tr_s!" -->
-<dt><a name="label:82" id="label:82"><code>upcase!</code></a><!-- RDLabel: "upcase!" -->
+<dt><a name="label:29" id="label:29"><code><var>self</var> == <var>other</var></code></a></dt><!-- RDLabel: "self == other" -->
+<dd>
+<p>comparison</p></dd>
+<dt><a name="label:30" id="label:30"><code><var>self</var> &gt; <var>other</var></code></a></dt><!-- RDLabel: "self > other" -->
+<dd>
+<p>comparison</p></dd>
+<dt><a name="label:31" id="label:31"><code><var>self</var> &gt;= <var>other</var></code></a></dt><!-- RDLabel: "self >= other" -->
+<dd>
+<p>comparison</p></dd>
+<dt><a name="label:32" id="label:32"><code><var>self</var> &lt; <var>other</var></code></a></dt><!-- RDLabel: "self < other" -->
+<dd>
+<p>comparison</p></dd>
+<dt><a name="label:33" id="label:33"><code><var>self</var> &lt;= <var>other</var></code></a></dt><!-- RDLabel: "self <= other" -->
+<dd>
+<p>comparison</p></dd>
+<dt><a name="label:34" id="label:34"><code><var>self</var> === <var>other</var></code></a></dt><!-- RDLabel: "self === other" -->
+<dd>
+<p>used for <var>case</var> comparison</p></dd>
+<dt><a name="label:35" id="label:35"><code><var>self</var> &lt;&lt; <var>other</var></code></a></dt><!-- RDLabel: "self << other" -->
+<dd>
+<p>append <var>other</var> to <var>self</var></p></dd>
+<dt><a name="label:36" id="label:36"><code><var>self</var> =~ <var>other</var></code></a></dt><!-- RDLabel: "self =~ other" -->
+<dd>
+<p>return an index of the match </p></dd>
+<dt><a name="label:37" id="label:37"><code>self[nth]</code></a></dt><!-- RDLabel: "self[nth]" -->
+<dd>
+<p>retrieve the <var>nth</var> character</p></dd>
+<dt><a name="label:38" id="label:38"><code>self[start..last]</code></a></dt><!-- RDLabel: "self[start..last]" -->
+<dd>
+<p>return a substring from <var>start</var> to <var>last</var></p></dd>
+<dt><a name="label:39" id="label:39"><code>self[start, <var>length</var>]</code></a></dt><!-- RDLabel: "self[start, length]" -->
+<dd>
+<p>return a substring of <var>lenght</var> characters from <var>start</var> </p></dd>
+<dt><a name="label:40" id="label:40"><code>self[nth] = <var>val</var></code></a></dt><!-- RDLabel: "self[nth] = val" -->
+<dd>
+<p>change the <var>nth</var> character with <var>val</var></p></dd>
+<dt><a name="label:41" id="label:41"><code>self[start..last] = <var>val</var></code></a></dt><!-- RDLabel: "self[start..last] = val" -->
+<dd>
+<p>change substring from <var>start</var> to <var>last</var> with <var>val</var></p></dd>
+<dt><a name="label:42" id="label:42"><code>self[start, <var>len</var>] = <var>val</var></code></a></dt><!-- RDLabel: "self[start, len] = val" -->
+<dd>
+<p>replace <var>length</var> characters from <var>start</var> with <var>val</var>.</p></dd>
+<dt><a name="label:43" id="label:43"><code><var>self</var> &lt;=&gt; <var>other</var></code></a></dt><!-- RDLabel: "self <=> other" -->
+<dd>
+<p>comparison : return -1, 0, 1</p></dd>
+<dt><a name="label:44" id="label:44"><code>casecmp(<var>other</var>)   &gt;= <var>1</var>.<var>7</var>.<var>1</var></code></a><!-- RDLabel: "casecmp" -->
+<dt><a name="label:45" id="label:45"><code>concat(<var>other</var>)</code></a></dt><!-- RDLabel: "concat" -->
+<dd>
+<p>append the contents of <var>other</var></p></dd>
+<dt><a name="label:46" id="label:46"><code>capitalize!</code></a></dt><!-- RDLabel: "capitalize!" -->
+<dd>
+<p>change the first character to uppercase letter</p></dd>
+<dt><a name="label:47" id="label:47"><code>chop!</code></a></dt><!-- RDLabel: "chop!" -->
+<dd>
+<p>chop off the last character</p></dd>
+<dt><a name="label:48" id="label:48"><code>chomp!([<var>rs</var>])</code></a></dt><!-- RDLabel: "chomp!" -->
+<dd>
+<p>chop off the  line ending character, specified by <var>rs</var></p></dd>
+<dt><a name="label:49" id="label:49"><code>count(<var>o1</var> [, <var>o2</var>, ...])</code></a></dt><!-- RDLabel: "count" -->
+<dd>
+<p>each parameter defines a set of character to count</p></dd>
+<dt><a name="label:50" id="label:50"><code>crypt(<var>salt</var>)</code></a></dt><!-- RDLabel: "crypt" -->
+<dd>
+<p>crypt with <var>salt</var> </p></dd>
+<dt><a name="label:51" id="label:51"><code>delete!(<var>str</var>)</code></a></dt><!-- RDLabel: "delete!" -->
+<dd>
+<p>delete every characters included in <var>str</var></p></dd>
+<dt><a name="label:52" id="label:52"><code>downcase!</code></a></dt><!-- RDLabel: "downcase!" -->
+<dd>
+<p>change all uppercase character to lowercase character</p></dd>
+<dt><a name="label:53" id="label:53"><code>each_byte {|<var>char</var>|...}</code></a></dt><!-- RDLabel: "each_byte" -->
+<dd>
+<p>iterate on each byte</p></dd>
+<dt><a name="label:54" id="label:54"><code>each([<var>rs</var>]) {|<var>line</var>|...}</code></a><!-- RDLabel: "each" -->
+<dt><a name="label:55" id="label:55"><code>each_line([<var>rs</var>]) {|<var>line</var>|...}</code></a></dt><!-- RDLabel: "each_line" -->
+<dd>
+<p>iterate on each line</p></dd>
+<dt><a name="label:56" id="label:56"><code>empty?</code></a></dt><!-- RDLabel: "empty?" -->
+<dd>
+<p>return <var>true</var> if the file is empty</p></dd>
+<dt><a name="label:57" id="label:57"><code>freeze</code></a></dt><!-- RDLabel: "freeze" -->
+<dd>
+<p>freeze the current file </p></dd>
+<dt><a name="label:58" id="label:58"><code>frozen</code></a></dt><!-- RDLabel: "frozen" -->
+<dd>
+<p>return <var>true</var> if the file is frozen</p></dd>
+<dt><a name="label:59" id="label:59"><code>gsub!(<var>pattern</var>, <var>replace</var>)</code></a></dt><!-- RDLabel: "gsub!" -->
+<dd>
+<p>global substitution</p></dd>
+<dt><a name="label:60" id="label:60"><code>gsub!(<var>pattern</var>) {|<var>str</var>|...}</code></a></dt><!-- RDLabel: "gsub!" -->
+<dd>
+<p>global substitution</p></dd>
+<dt><a name="label:61" id="label:61"><code>include?(<var>other</var>)</code></a></dt><!-- RDLabel: "include?" -->
+<dd>
+<p>return <var>true</var> if <var>other</var> is found</p></dd>
+<dt><a name="label:62" id="label:62"><code>index(<var>substr</var>[, <var>pos</var>])</code></a></dt><!-- RDLabel: "index" -->
+<dd>
+<p>return the index of <var>substr</var> </p></dd>
+<dt><a name="label:63" id="label:63"><code>insert(<var>index</var>, <var>str</var>) &gt;= <var>1</var>.<var>7</var>.<var>1</var></code></a></dt><!-- RDLabel: "insert" -->
+<dd>
+<p>insert <var>str</var> at <var>index</var></p></dd>
+<dt><a name="label:64" id="label:64"><code>length</code></a></dt><!-- RDLabel: "length" -->
+<dd>
+<p>return the size of the file</p></dd>
+<dt><a name="label:65" id="label:65"><code>reverse!</code></a></dt><!-- RDLabel: "reverse!" -->
+<dd>
+<p>reverse the content of the file </p></dd>
+<dt><a name="label:66" id="label:66"><code>rindex(<var>substr</var>[, <var>pos</var>])</code></a></dt><!-- RDLabel: "rindex" -->
+<dd>
+<p>return the index of the last occurrence of <var>substr</var></p></dd>
+<dt><a name="label:67" id="label:67"><code>scan(<var>pattern</var>)</code></a></dt><!-- RDLabel: "scan" -->
+<dd>
+<p>return an array of all occurence matched by <var>pattern</var> </p></dd>
+<dt><a name="label:68" id="label:68"><code>scan(<var>pattern</var>) {|<var>str</var>| ...}</code></a></dt><!-- RDLabel: "scan" -->
+<dd>
+<p>iterate through the file, matching the <var>pattern</var></p></dd>
+<dt><a name="label:69" id="label:69"><code>size</code></a></dt><!-- RDLabel: "size" -->
+<dd>
+<p>return the size of the file</p></dd>
+<dt><a name="label:70" id="label:70"><code>slice</code></a></dt><!-- RDLabel: "slice" -->
+<dd>
+<p>same than <var>[]</var></p></dd>
+<dt><a name="label:71" id="label:71"><code>slice!</code></a></dt><!-- RDLabel: "slice!" -->
+<dd>
+<p>delete the specified portion of the file</p></dd>
+<dt><a name="label:72" id="label:72"><code>split([<var>sep</var>[, <var>limit</var>]])</code></a></dt><!-- RDLabel: "split" -->
+<dd>
+<p>splits into a list of strings and return this array</p></dd>
+<dt><a name="label:73" id="label:73"><code>squeeze!([<var>str</var>])</code></a></dt><!-- RDLabel: "squeeze!" -->
+<dd>
+<p>squeezes sequences of the same characters which is included in <var>str</var></p></dd>
+<dt><a name="label:74" id="label:74"><code>strip!</code></a></dt><!-- RDLabel: "strip!" -->
+<dd>
+<p>removes leading and trailing whitespace</p></dd>
+<dt><a name="label:75" id="label:75"><code>sub!(<var>pattern</var>, <var>replace</var>)</code></a></dt><!-- RDLabel: "sub!" -->
+<dd>
+<p>substitution </p></dd>
+<dt><a name="label:76" id="label:76"><code>sub!(<var>pattern</var>) {|<var>str</var>| ...}</code></a></dt><!-- RDLabel: "sub!" -->
+<dd>
+<p>substitution</p></dd>
+<dt><a name="label:77" id="label:77"><code>sum([<var>bits</var>])</code></a></dt><!-- RDLabel: "sum" -->
+<dd>
+<p>return a checksum</p></dd>
+<dt><a name="label:78" id="label:78"><code>swapcase!</code></a></dt><!-- RDLabel: "swapcase!" -->
+<dd>
+<p>replaces all lowercase characters to uppercase characters, and vice-versa</p></dd>
+<dt><a name="label:79" id="label:79"><code>tr!(<var>search</var>, <var>replace</var>)</code></a></dt><!-- RDLabel: "tr!" -->
+<dd>
+<p>translate the character from <var>search</var> to <var>replace</var> </p></dd>
+<dt><a name="label:80" id="label:80"><code>tr_s!(<var>search</var>, <var>replace</var>)</code></a></dt><!-- RDLabel: "tr_s!" -->
+<dd>
+<p>translate the character from <var>search</var> to <var>replace</var>, then
+squeeze sequence of the same characters </p></dd>
+<dt><a name="label:81" id="label:81"><code>upcase!</code></a></dt><!-- RDLabel: "upcase!" -->
+<dd>
+<p>replaces all lowercase characters to downcase characters</p></dd>
 </dl>
 
 </body>

@@ -30,7 +30,7 @@ unknown: $(DLLIB)
 rdoc: docs/doc/index.html
 
 docs/doc/index.html: $(RDOC)
-\t@-(cd docs; b.rb mmap; rdoc mmap.rb)
+\t@-(cd docs; $(RUBY) b.rb mmap; rdoc mmap.rb)
 
 rd2: html
 

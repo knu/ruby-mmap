@@ -140,9 +140,13 @@ class TestMmap < Inh::TestCase
       assert_equal($mmap.scan(/include/), $str.scan(/include/), "<scan>")
       assert_equal($mmap.index("rb_raise"), $str.index("rb_raise"), "<index>")
       assert_equal($mmap.rindex("rb_raise"), $str.rindex("rb_raise"), "<rindex>")
+      assert_equal($mmap.index(/rb_raise/), $str.index(/rb_raise/), "<index>")
+      assert_equal($mmap.rindex(/rb_raise/), $str.rindex(/rb_raise/), "<rindex>")
       ('a' .. 'z').each do |i|
 	 assert_equal($mmap.index(i), $str.index(i), "<index>")
 	 assert_equal($mmap.rindex(i), $str.rindex(i), "<rindex>")
+	 assert_equal($mmap.index(i), $str.index(/#{i}/), "<index>")
+	 assert_equal($mmap.rindex(i), $str.rindex(/#{i}/), "<rindex>")
       end
       $mmap.sub!(/GetMmap/, 'XXXX'); $str.sub!(/GetMmap/, 'XXXX')
       assert_equal($mmap.to_str, $str, "<after sub!>")

@@ -11,7 +11,8 @@ end
 
 def normalize(text)
    norm = text.gsub(/\(\(\|([^|]+)\|\)\)/, '<em>\\1</em>')
-   norm.gsub(/\(\(\{/, '<tt>').gsub!(/\}\)\)/, '</tt>')
+   norm.gsub!(/\(\(\{/, '<tt>')
+   norm.gsub!(/\}\)\)/, '</tt>')
    norm.gsub!(/\(\(<([^|>]+)[^>]*>\)\)/, '<em>\\1</em>')
    norm.gsub!(/^\s*:\s/, ' * ')
    norm

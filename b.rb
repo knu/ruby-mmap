@@ -7,7 +7,7 @@ f.write("\0" * PAGESIZE)
 f.write("b.rb")
 f.write("\0" * PAGESIZE)
 f.close
-m = Mmap.new("aa", "rw", "offset" => 0)
+m = Mmap.new("aa", "w", "offset" => 0)
 p m.size == "b.rb".size + 2 * PAGESIZE
 p m.scan(/[a-z.]+/) == ["b.rb"]
 p m.index("b.rb") == PAGESIZE

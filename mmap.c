@@ -43,6 +43,12 @@
 #define MAP_FAILED ((caddr_t)-1)
 #endif /* !MAP_FAILED */
 
+#ifndef MAP_ANON
+#ifdef MAP_ANONYMOUS
+#define MAP_ANON MAP_ANONYMOUS
+#endif
+#endif
+
 static VALUE mm_cMap;
 
 #define EXP_INCR_SIZE 4096
@@ -50,11 +56,19 @@ static VALUE mm_cMap;
 typedef struct {
     MMAP_RETTYPE addr;
     int smode, pmode, vscope;
-    int advice, frozen, lock;
+    int advice, flag;
     size_t len, real, incr;
     off_t offset;
+    VALUE io;
     char *path;
 } mm_mmap;
+
+static void
+mm_mark(t_mm)
+    mm_mmap *t_mm;
+{
+    rb_gc_mark(t_mm->io);
+}
 
 static void
 mm_free(t_mm)
@@ -80,15 +94,17 @@ mm_free(t_mm)
 #define MM_CHANGE (MM_MODIFY | 4)
 #define MM_PROTECT 8
 
-#define MM_FROZEN 1
-#define MM_FIXED  2
+#define MM_FROZEN (1<<0)
+#define MM_FIXED  (1<<1)
+#define MM_ANON   (1<<2)
+#define MM_LOCK   (1<<3)
 
 #define GetMmap(obj, t_mm, t_modify)				\
     Data_Get_Struct(obj, mm_mmap, t_mm);			\
     if (!t_mm->path) {						\
 	rb_raise(rb_eIOError, "unmapped file");			\
     }								\
-    if ((t_modify & MM_MODIFY) && (t_mm->frozen & MM_FROZEN)) {	\
+    if ((t_modify & MM_MODIFY) && (t_mm->flag & MM_FROZEN)) {	\
 	rb_error_frozen("mmap");				\
     }
 
@@ -120,7 +136,7 @@ mm_freeze(obj)
     mm_mmap *t_mm;
     rb_obj_freeze(obj);
     GetMmap(obj, t_mm, 0);
-    t_mm->frozen |= MM_FROZEN;
+    t_mm->flag |= MM_FROZEN;
 }
 
 static VALUE
@@ -133,7 +149,7 @@ mm_str(obj, modify)
 
     GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
     if (modify & MM_MODIFY) {
-	if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
+	if (t_mm->flag & MM_FROZEN) rb_error_frozen("mmap");
 	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
 	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
     }
@@ -161,7 +177,7 @@ mm_str(obj, modify)
 	RSTRING(ret)->orig = ret;
 #endif
     }
-    if (t_mm->frozen & MM_FROZEN) {
+    if (t_mm->flag & MM_FROZEN) {
 	ret = rb_obj_freeze(ret);
     }
     return ret;
@@ -186,8 +202,11 @@ mm_expandf(t_mm, len)
     if (t_mm->vscope == MAP_PRIVATE) {
 	rb_raise(rb_eTypeError, "expand for a private map");
     }
-    if (t_mm->frozen & MM_FIXED) {
+    if (t_mm->flag & MM_FIXED) {
 	rb_raise(rb_eTypeError, "expand for a fixed map");
+    }
+    if (!t_mm->path || t_mm->path == (char *)-1) {
+	rb_raise(rb_eTypeError, "expand for an anonymous map");
     }
     if (munmap(t_mm->addr, t_mm->len)) {
 	rb_raise(rb_eArgError, "munmap failed");
@@ -216,7 +235,7 @@ mm_expandf(t_mm, len)
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
 #endif
-    if (t_mm->lock && mlock(t_mm->addr, len) == -1) {
+    if ((t_mm->flag & MM_LOCK) && mlock(t_mm->addr, len) == -1) {
 	rb_raise(rb_eArgError, "mlock(%d)", errno);
     }
     t_mm->len  = len;
@@ -227,7 +246,7 @@ mm_realloc(t_mm, len)
     mm_mmap *t_mm;
     long len;
 {
-    if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
+    if (t_mm->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len > t_mm->len) {
 	if ((len - t_mm->len) < t_mm->incr) {
 	    len = t_mm->len + t_mm->incr;
@@ -269,14 +288,14 @@ mm_i_options(arg, obj)
 	if (t_mm->len <= 0) {
 	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->len);
 	}
-	t_mm->frozen |= MM_FIXED;
+	t_mm->flag |= MM_FIXED;
     }
     else if (strcmp(options, "offset") == 0) {
 	t_mm->offset = NUM2INT(value);
 	if (t_mm->offset < 0) {
 	    rb_raise(rb_eArgError, "Invalid value for offset %d", t_mm->offset);
 	}
-	t_mm->frozen |= MM_FIXED;
+	t_mm->flag |= MM_FIXED;
     }
     else if (strcmp(options, "advice") == 0) {
 	t_mm->advice = NUM2INT(value);
@@ -300,7 +319,7 @@ mm_s_alloc(argc, argv, obj)
     VALUE res;
     mm_mmap *t_mm;
 
-    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
+    res = Data_Make_Struct(obj, mm_mmap, mm_mark, mm_free, t_mm);
     t_mm->incr = EXP_INCR_SIZE;
     return res;
 }
@@ -318,11 +337,12 @@ mm_s_new(argc, argv, obj)
     struct stat st;
     int fd, smode, pmode, vscope, perm, init;
     MMAP_RETTYPE addr;
-    VALUE res, fname, vmode, scope, options;
+    VALUE res, fname, fdv, vmode, scope, options;
     mm_mmap *t_mm;
     char *path, *mode;
     size_t size = 0;
     off_t offset;
+    int anonymous;
 
     options = Qnil;
     if (argc > 1 && TYPE(argv[argc - 1]) == T_HASH) {
@@ -331,29 +351,49 @@ mm_s_new(argc, argv, obj)
     }
     rb_scan_args(argc, argv, "12", &fname, &vmode, &scope);
     vscope = 0;
+    path = 0;
+    fd = -1;
+    anonymous = 0;
+    fdv = Qnil;
 #ifdef MAP_ANON
     if (NIL_P(fname)) {
 	vscope = MAP_ANON | MAP_SHARED;
-	path = 0;
+	anonymous = 1;
     }
-    else {
-	Check_SafeStr(fname);
-	path = RSTRING(fname)->ptr;
+    else 
+#endif
+    {
+	if (rb_safe_level() > 0 && OBJ_TAINTED(fname)){
+	    rb_raise(rb_eSecurityError, "Insecure operation");
+	}
+	rb_secure(4);
+	if (rb_respond_to(fname, rb_intern("fileno"))) {
+	    fdv = rb_funcall2(fname, rb_intern("fileno"), 0, 0);
+	}
+	if (NIL_P(fdv)) {
+	    fname = rb_str_to_str(fname);
+	    Check_SafeStr(fname);
+	    path = RSTRING(fname)->ptr;
+	}
+	else {
+	    fd = NUM2INT(fdv);
+	    if (fd < 0) {
+		rb_raise(rb_eArgError, "invalid file descriptor %d", fd);
+	    }
+	}
 	if (!NIL_P(scope)) {
 	    vscope = NUM2INT(scope);
+#ifdef MAP_ANON
 	    if (vscope & MAP_ANON) {
 		rb_raise(rb_eArgError, "filename specified for an anonymous map");
 	    }
+#endif
 	}
     }
-#else
-    Check_SafeStr(fname);
-    path = RSTRING(fname)->ptr;
-#endif
     vscope |= NIL_P(scope) ? MAP_SHARED : NUM2INT(scope);
     size = 0;
     perm = 0666;
-    if (path) {
+    if (!anonymous) {
 	if (NIL_P(vmode)) {
 	    mode = "r";
 	}
@@ -372,6 +412,9 @@ mm_s_new(argc, argv, obj)
 	else if (strcmp(mode, "w") == 0) {
 	    smode = O_WRONLY;
 	    pmode = PROT_WRITE;
+	    if (!NIL_P(fdv)) {
+		pmode |= PROT_READ;
+	    }
 	}
 	else if (strcmp(mode, "rw") == 0 || strcmp(mode, "wr") == 0) {
 	    smode = O_RDWR;
@@ -384,8 +427,10 @@ mm_s_new(argc, argv, obj)
 	else {
 	    rb_raise(rb_eArgError, "Invalid mode %s", mode);
 	}
-	if ((fd = open(path, smode, perm)) == -1) {
-	    rb_raise(rb_eArgError, "Can't open %s", path);
+	if (NIL_P(fdv)) {
+	    if ((fd = open(path, smode, perm)) == -1) {
+		rb_raise(rb_eArgError, "Can't open %s", path);
+	    }
 	}
 	if (fstat(fd, &st) == -1) {
 	    rb_raise(rb_eArgError, "Can't stat %s", path);
@@ -402,7 +447,7 @@ mm_s_new(argc, argv, obj)
     Data_Get_Struct(obj, mm_mmap, t_mm);
     res = obj;
 #else
-    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
+    res = Data_Make_Struct(obj, mm_mmap, mm_mark, mm_free, t_mm);
     t_mm->incr = EXP_INCR_SIZE;
 #endif
     offset = 0;
@@ -416,7 +461,7 @@ mm_s_new(argc, argv, obj)
 	offset = t_mm->offset;
     }
     init = 0;
-    if (!path) {
+    if (anonymous) {
 	if (size <= 0) {
 	    rb_raise(rb_eArgError, "length not specified for an anonymous map");
 	}
@@ -426,22 +471,29 @@ mm_s_new(argc, argv, obj)
 	}
 	smode = O_RDWR;
 	pmode = PROT_READ | PROT_WRITE;
-	t_mm->frozen |= MM_FIXED;
+	t_mm->flag |= MM_FIXED;
     }
-    else if (size == 0 && (smode & O_RDWR)) {
-	if (lseek(fd, t_mm->incr - 1, SEEK_END) == -1) {
-	    rb_raise(rb_eIOError, "Can't lseek %d", t_mm->incr - 1);
+    else {
+	if (size == 0 && (smode & O_RDWR)) {
+	    if (lseek(fd, t_mm->incr - 1, SEEK_END) == -1) {
+		rb_raise(rb_eIOError, "Can't lseek %d", t_mm->incr - 1);
+	    }
+	    if (write(fd, "\000", 1) != 1) {
+		rb_raise(rb_eIOError, "Can't extend %s", path);
+	    }
+	    init = 1;
+	    size = t_mm->incr;
 	}
-	if (write(fd, "\000", 1) != 1) {
-	    rb_raise(rb_eIOError, "Can't extend %s", path);
+	if (!NIL_P(fdv)) {
+	    t_mm->flag |= MM_FIXED;
 	}
-	init = 1;
-	size = t_mm->incr;
     }
     addr = mmap(0, size, pmode, vscope, fd, offset);
-    if (fd != -1) close(fd);
+    if (NIL_P(fdv) && !anonymous) {
+	close(fd);
+    }
     if (addr == MAP_FAILED || !addr) {
-	rb_raise(rb_eArgError, "mmap failed (%x)", addr);
+	rb_raise(rb_eArgError, "mmap failed (%d)", errno);
     }
 #ifdef MADV_NORMAL
     if (t_mm->advice && madvise(addr, size, t_mm->advice) == -1) {
@@ -455,9 +507,12 @@ mm_s_new(argc, argv, obj)
     t_mm->vscope = vscope;
     t_mm->smode = smode;
     t_mm->path = (path)?ruby_strdup(path):(char *)-1;
+    if (!NIL_P(fdv)) {
+	t_mm->io = fname;
+    }
     if (smode == O_RDONLY) {
 	res = rb_obj_freeze(res);
-	t_mm->frozen |= MM_FROZEN;
+	t_mm->flag |= MM_FROZEN;
     }
     else {
 	OBJ_TAINT(res);
@@ -524,7 +579,7 @@ mm_mprotect(obj, a)
     else {
 	pmode = NUM2INT(a);
     }
-    if ((pmode & PROT_WRITE) && (t_mm->frozen & MM_FROZEN)) 
+    if ((pmode & PROT_WRITE) && (t_mm->flag & MM_FROZEN)) 
 	rb_error_frozen("mmap");
     if ((ret = mprotect(t_mm->addr, t_mm->len, pmode)) != 0) {
 	rb_raise(rb_eArgError, "mprotect(%d)", ret);
@@ -536,7 +591,7 @@ mm_mprotect(obj, a)
 	    t_mm->smode == O_RDONLY;
 	    if (t_mm->vscope == MAP_PRIVATE) {
 		obj = rb_obj_freeze(obj);
-		t_mm->frozen |= MM_FROZEN;
+		t_mm->flag |= MM_FROZEN;
 	    }
 	}
     }
@@ -587,7 +642,7 @@ mm_update(str, beg, len, val)
     char *valp;
     long vall;
 
-    if (str->frozen & MM_FROZEN) rb_error_frozen("mmap");
+    if (str->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len < 0) rb_raise(rb_eIndexError, "negative length %d", len);
     if (beg < 0) {
 	beg += str->real;
@@ -604,7 +659,7 @@ mm_update(str, beg, len, val)
 
     StringMmap(val, valp, vall);
 
-    if ((str->frozen & MM_FIXED) && vall != len) {
+    if ((str->flag & MM_FIXED) && vall != len) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     if (len < vall) {
@@ -675,7 +730,8 @@ get_pat(pat)
 }
 
 static int
-mm_correct_backref()
+mm_correct_backref(t_mm)
+    mm_mmap *t_mm;
 {
     VALUE match;
     struct re_registers *regs;
@@ -725,7 +781,7 @@ mm_sub_bang(argc, argv, obj)
     pat = get_pat(argv[0]);
     res = Qnil;
     if (rb_reg_search(pat, str, 0, 0) >= 0) {
-	start = mm_correct_backref();
+	start = mm_correct_backref(t_mm);
 	match = rb_backref_get();
 	regs = RMATCH(match)->regs;
 	if (iter) {
@@ -739,20 +795,20 @@ mm_sub_bang(argc, argv, obj)
 	    RSTRING(str)->ptr -= start;
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
-	plen = END(0);
+	plen = END(0) - BEG(0);
 	if (RSTRING(repl)->len > plen) {
 	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(repl)->len - plen);
 	    RSTRING(str)->ptr = t_mm->addr;
 	}
 	if (RSTRING(repl)->len != plen) {
-	    if (t_mm->frozen & MM_FIXED) {
+	    if (t_mm->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(RSTRING(str)->ptr + start + RSTRING(repl)->len,
-		    RSTRING(str)->ptr + start + plen,
-		    RSTRING(str)->len - start - plen);
+	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(repl)->len,
+		    RSTRING(str)->ptr + start + BEG(0) + plen,
+		    RSTRING(str)->len - start - BEG(0) - plen);
 	}
-	memcpy(RSTRING(str)->ptr + start,
+	memcpy(RSTRING(str)->ptr + start + BEG(0),
 	       RSTRING(repl)->ptr, RSTRING(repl)->len);
 	t_mm->real += RSTRING(repl)->len - plen;
 	if (tainted) OBJ_TAINT(obj);
@@ -798,7 +854,7 @@ mm_gsub_bang(argc, argv, obj)
 	return Qnil;
     }
     while (beg >= 0) {
-	start = mm_correct_backref();
+	start = mm_correct_backref(t_mm);
 	match = rb_backref_get();
 	regs = RMATCH(match)->regs;
 	if (iter) {
@@ -812,20 +868,19 @@ mm_gsub_bang(argc, argv, obj)
 	    RSTRING(str)->ptr -= start;
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
-	plen = END(0);
+	plen = END(0) - BEG(0);
 	if ((t_mm->real + RSTRING(val)->len - plen) > t_mm->len) {
 	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(val)->len - plen);
-	    RSTRING(str)->ptr = t_mm->addr;
 	}
 	if (RSTRING(val)->len != plen) {
-	    if (t_mm->frozen & MM_FIXED) {
+	    if (t_mm->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(RSTRING(str)->ptr + start + RSTRING(val)->len,
-		    RSTRING(str)->ptr + start + plen,
-		    RSTRING(str)->len - start - plen);
+	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(val)->len,
+		    RSTRING(str)->ptr + start + BEG(0) + plen,
+		    RSTRING(str)->len - start - BEG(0) - plen);
 	}
-	memcpy(RSTRING(str)->ptr + start,
+	memcpy(RSTRING(str)->ptr + start + BEG(0),
 	       RSTRING(val)->ptr, RSTRING(val)->len);
 	RSTRING(str)->len += RSTRING(val)->len - plen;
 	t_mm->real = RSTRING(str)->len;
@@ -1014,11 +1069,11 @@ mm_slice_bang(argc, argv, str)
     }
     buf[i] = rb_str_new(0,0);
     result = mm_aref_m(argc, buf, str);
-#if RUBY_VERSION_CODE >= 172
+#if RUBY_VERSION_CODE >= 168
     if (!NIL_P(result)) {
 #endif
 	mm_aset_m(argc+1, buf, str);
-#if RUBY_VERSION_CODE >= 172
+#if RUBY_VERSION_CODE >= 168
     }
 #endif
     return result;
@@ -1094,7 +1149,7 @@ mm_strip_bang(str)
     while (s <= t && ISSPACE(*t)) t--;
     t++;
 
-    if (t_mm->real != (t - s) && (t_mm->frozen & MM_FIXED)) {
+    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t-s;
@@ -1126,7 +1181,7 @@ mm_lstrip_bang(str)
     e = t = s + t_mm->real;
     while (s < t && ISSPACE(*s)) s++;
 
-    if (t_mm->real != (t - s) && (t_mm->frozen & MM_FIXED)) {
+    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t - s;
@@ -1151,7 +1206,7 @@ mm_rstrip_bang(str)
     t--;
     while (s <= t && ISSPACE(*t)) t--;
     t++;
-    if (t_mm->real != (t - s) && (t_mm->frozen & MM_FIXED)) {
+    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t - s;
@@ -1316,7 +1371,7 @@ mm_bang_i(obj, flag, id, argc, argv)
     mm_mmap *t_mm;
 
     GetMmap(obj, t_mm, 0);
-    if ((flag & MM_CHANGE) && (t_mm->frozen & MM_FIXED)) {
+    if ((flag & MM_CHANGE) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     str = mm_str(obj, flag);
@@ -1583,13 +1638,13 @@ mm_mlock(obj)
     mm_mmap *t_mm;
 
     Data_Get_Struct(obj, mm_mmap, t_mm);
-    if (t_mm->lock) {
+    if (t_mm->flag & MM_LOCK) {
 	return obj;
     }
     if (mlock(t_mm->addr, t_mm->len) == -1) {
 	rb_raise(rb_eArgError, "mlock(%d)", errno);
     }
-    t_mm->lock = 1;
+    t_mm->flag |= MM_LOCK;
     return obj;
 }
 
@@ -1600,16 +1655,15 @@ mm_munlock(obj)
     mm_mmap *t_mm;
 
     Data_Get_Struct(obj, mm_mmap, t_mm);
-    if (!t_mm->lock) {
+    if (!(t_mm->flag & MM_LOCK)) {
 	return obj;
     }
     if (munlock(t_mm->addr, t_mm->len) == -1) {
 	rb_raise(rb_eArgError, "munlock(%d)", errno);
     }
-    t_mm->lock = 0;
+    t_mm->flag &= ~MM_LOCK;
     return obj;
 }
-
 
 void
 Init_mmap()

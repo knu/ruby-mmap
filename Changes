@@ -44,3 +44,8 @@
 * don't test size for MAP_ANON
 * added syntax Mmap(nil, length)
 * documentation : make rd2; make rdoc
+
+-- 0.1.9
+
+* String#slice! was modified in 1.6.8
+* added ::new(IO)
