@@ -53,6 +53,8 @@ mm_free(t_mm)
 	if (t_mm->path != (char *)-1) {
 	    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
 		truncate(t_mm->path, t_mm->real) == -1) {
+		free(t_mm->path);
+		free(t_mm);
 		rb_raise(rb_eTypeError, "truncate");
 	    }
 	    free(t_mm->path);
@@ -118,19 +120,28 @@ mm_str(obj, modify)
     VALUE ret;
 
     GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
+#if RUBY_VERSION_CODE >= 171
+    ret = rb_obj_alloc(rb_cString);
+    if (rb_obj_tainted(obj)) {
+	OBJ_TAINT(ret);
+    }
+#else
     if (rb_obj_tainted(obj)) {
 	ret = rb_tainted_str_new2("");
     }
     else {
 	ret = rb_str_new2("");
     }
+#endif
     if (modify & MM_MODIFY) {
 	if (t_mm->frozen & MM_FROZEN) rb_error_frozen("mmap");
 	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
 	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
     }
     if (t_mm->frozen & MM_FROZEN) ret = rb_obj_freeze(ret);
+#if RUBY_VERSION_CODE < 171
     free(RSTRING(ret)->ptr);
+#endif
     RSTRING(ret)->ptr = t_mm->addr;
     RSTRING(ret)->len = t_mm->real;
     if (modify & MM_ORIGIN)
@@ -181,7 +192,7 @@ mm_i_options(arg, obj)
 }
 
 static VALUE
-mm_map(argc, argv, obj)
+mm_s_new(argc, argv, obj)
     VALUE obj, *argv;
     int argc;
 {
@@ -406,7 +417,7 @@ mm_mprotect(obj, a)
     if ((pmode & PROT_WRITE) && (t_mm->frozen & MM_FROZEN)) 
 	rb_error_frozen("mmap");
     if ((ret = mprotect(t_mm->addr, t_mm->len, pmode)) != 0) {
-	rb_raise(rb_eArgError, "msync(%d)", ret);
+	rb_raise(rb_eArgError, "mprotect(%d)", ret);
     }
     t_mm->pmode = pmode;
     if (pmode & PROT_READ) {
@@ -439,22 +450,20 @@ mm_madvise(obj, a)
     return Qnil;
 }
 
-#define StringMmap(b, bp, bl)						\
-    do {								\
-        if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap)) {	\
-	    mm_mmap *b_mm;						\
-									\
-	    GetMmap(b, b_mm, 0);					\
-	    bp = b_mm->addr;						\
-	    bl = b_mm->real;						\
-	}								\
-	else {								\
-	    if (TYPE(b) != T_STRING) b = rb_str_to_str(b);		\
-	    bp = RSTRING(b)->ptr;					\
-	    bl = RSTRING(b)->len;					\
-	}								\
-    } while (0);
-
+#define StringMmap(b, bp, bl)						   \
+do {									   \
+    if (TYPE(b) == T_DATA && RDATA(b)->dfree == (RUBY_DATA_FUNC)mm_free) { \
+	mm_mmap *b_mm;							   \
+	GetMmap(b, b_mm, 0);						   \
+	bp = b_mm->addr;						   \
+	bl = b_mm->real;						   \
+    }									   \
+    else {								   \
+	if (TYPE(b) != T_STRING) b = rb_str_to_str(b);			   \
+	bp = RSTRING(b)->ptr;						   \
+	bl = RSTRING(b)->len;						   \
+    }									   \
+} while (0);
 
 static void
 mm_update(str, beg, len, val)
@@ -512,7 +521,7 @@ mm_match(x, y)
     long start;
 
     x = mm_str(x, MM_ORIGIN);
-    if (TYPE(y) == T_DATA && rb_obj_is_kind_of(y, mm_cMap)) {
+    if (TYPE(y) == T_DATA && RDATA(y)->dfree == (RUBY_DATA_FUNC)mm_free) {
 	y = mm_to_str(y);
     }
     switch (TYPE(y)) {
@@ -592,7 +601,7 @@ mm_sub_bang(argc, argv, obj)
 	iter = 1;
     }
     else if (argc == 2) {
-	repl = rb_obj_as_string(argv[1]);;
+	repl = rb_str_to_str(argv[1]);
 	if (OBJ_TAINTED(repl)) tainted = 1;
     }
     else {
@@ -634,7 +643,7 @@ mm_sub_bang(argc, argv, obj)
 	}
 	memcpy(RSTRING(str)->ptr + start,
 	       RSTRING(repl)->ptr, RSTRING(repl)->len);
-	RSTRING(str)->len += RSTRING(repl)->len - plen;
+	t_mm->real += RSTRING(repl)->len - plen;
 	if (tainted) OBJ_TAINT(obj);
 
 	res = obj;
@@ -661,7 +670,7 @@ mm_gsub_bang(argc, argv, obj)
 	iter = 1;
     }
     else if (argc == 2) {
-	repl = rb_obj_as_string(argv[1]);
+	repl = rb_str_to_str(argv[1]);
 	if (OBJ_TAINTED(repl)) tainted = 1;
     }
     else {
@@ -727,6 +736,39 @@ mm_gsub_bang(argc, argv, obj)
 
 static VALUE mm_index __((int, VALUE *, VALUE));
 
+#if RUBY_VERSION_CODE >= 171
+
+static VALUE
+mm_subpat_set(obj, re, offset, val)
+    VALUE obj, re;
+    int offset;
+    VALUE val;
+{
+    VALUE str, match;
+    int start, end, len;
+    mm_mmap *t_mm;
+    
+    str = mm_str(obj, MM_MODIFY | MM_ORIGIN);
+    if (rb_reg_search(re, str, 0, 0) < 0) {
+	rb_raise(rb_eIndexError, "regexp not matched");
+    }
+    match = rb_backref_get();
+    if (offset >= RMATCH(match)->regs->num_regs) {
+	rb_raise(rb_eIndexError, "index %d out of regexp", offset);
+    }
+
+    start = RMATCH(match)->BEG(offset);
+    if (start == -1) {
+	rb_raise(rb_eIndexError, "regexp group %d not matched", offset);
+    }
+    end = RMATCH(match)->END(offset);
+    len = end - start;
+    GetMmap(str, t_mm, MM_MODIFY);
+    mm_update(t_mm, start, len, val);
+}
+
+#endif
+
 static VALUE
 mm_aset(str, indx, val)
     VALUE str;
@@ -759,18 +801,22 @@ mm_aset(str, indx, val)
 	return val;
 
       case T_REGEXP:
+#if RUBY_VERSION_CODE >= 171
+	  mm_subpat_set(str, 0, indx, val);
+#else 
         {
 	    VALUE args[2];
 	    args[0] = indx;
 	    args[1] = val;
 	    mm_sub_bang(2, args, str);
 	}
+#endif
 	return val;
 
       case T_STRING:
 	beg = mm_index(1, &indx, str);
 	if (beg != -1) {
-	    mm_update(str, beg, RSTRING(indx)->len, val);
+	    mm_update(t_mm, beg, RSTRING(indx)->len, val);
 	}
 	return val;
 
@@ -800,10 +846,17 @@ mm_aset_m(argc, argv, str)
     if (argc == 3) {
 	long beg, len;
 
-	if (TYPE(argv[2]) != T_STRING) argv[2] = rb_str_to_str(argv[2]);
-	beg = NUM2INT(argv[0]);
-	len = NUM2INT(argv[1]);
-	mm_update(t_mm, beg, len, argv[2]);
+#if RUBY_VERSION_CODE >= 171
+	if (TYPE(argv[0]) == T_REGEXP) {
+	    mm_subpat_set(str, argv[0], NUM2INT(argv[1]), argv[2]);
+	}
+	else
+#endif
+	{
+	    beg = NUM2INT(argv[0]);
+	    len = NUM2INT(argv[1]);
+	    mm_update(t_mm, beg, len, argv[2]);
+	}
 	return argv[2];
     }
     if (argc != 2) {
@@ -997,7 +1050,7 @@ mm_strip_bang(str)
     VALUE str;
 {
     VALUE l = mm_lstrip_bang(str);
-    VALUE r = mm_str_rstrip_bang(str);
+    VALUE r = mm_rstrip_bang(str);
 
     if (NIL_P(l) && NIL_P(r)) return Qnil;
     return str;
@@ -1005,16 +1058,16 @@ mm_strip_bang(str)
 
 #endif
 
-#define MmapStr(b, recycle)						\
-do {									\
-    recycle = 0;							\
-    if (TYPE(b) == T_DATA && rb_obj_is_kind_of(b, mm_cMap) == Qtrue) {	\
-	recycle = 1;							\
-	b = mm_str(b, MM_ORIGIN);					\
-    }									\
-    else {								\
-	b = rb_str_to_str(b);						\
-    }									\
+#define MmapStr(b, recycle)						    \
+do {									    \
+    recycle = 0;							    \
+    if (TYPE(b) == T_DATA &&  RDATA(b)->dfree == (RUBY_DATA_FUNC)mm_free) { \
+	recycle = 1;							    \
+	b = mm_str(b, MM_ORIGIN);					    \
+    }									    \
+    else {								    \
+	b = rb_str_to_str(b);						    \
+    }									    \
 } while (0);
  
  
@@ -1057,13 +1110,34 @@ mm_equal(a, b)
     VALUE a, b;
 {
     VALUE result;
-    int recycle = 0;
     
+    if (a == b) return Qtrue;
+    if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
+	return Qfalse;
+
     a = mm_str(a, MM_ORIGIN);
-    MmapStr(b, recycle);
+    b = mm_str(b, MM_ORIGIN);
     result = rb_funcall2(a, rb_intern("=="), 1, &b);
     rb_gc_force_recycle(a);
-    if (recycle) rb_gc_force_recycle(b);
+    rb_gc_force_recycle(b);
+    return result;
+}
+
+static VALUE
+mm_eql(a, b)
+    VALUE a, b;
+{
+    VALUE result;
+    
+    if (a == b) return Qtrue;
+    if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
+	return Qfalse;
+
+    a = mm_str(a, MM_ORIGIN);
+    b = mm_str(b, MM_ORIGIN);
+    result = rb_funcall2(a, rb_intern("eql?"), 1, &b);
+    rb_gc_force_recycle(a);
+    rb_gc_force_recycle(b);
     return result;
 }
 
@@ -1468,7 +1542,7 @@ Init_mmap()
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
 
-    rb_define_singleton_method(mm_cMap, "new", mm_map, -1);
+    rb_define_singleton_method(mm_cMap, "new", mm_s_new, -1);
     rb_define_singleton_method(mm_cMap, "mlockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "munlockall", mm_munlockall, 0);
@@ -1495,7 +1569,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
     rb_define_method(mm_cMap, "==", mm_equal, 1);
     rb_define_method(mm_cMap, "===", mm_equal, 1);
-    rb_define_method(mm_cMap, "eql?", mm_equal, 1);
+    rb_define_method(mm_cMap, "eql?", mm_eql, 1);
     rb_define_method(mm_cMap, "hash", mm_hash, 0);
 #if RUBY_VERSION_CODE >= 171
     rb_define_method(mm_cMap, "casecmp", mm_casecmp, 1);
@@ -1524,7 +1598,7 @@ Init_mmap()
 
     rb_define_method(mm_cMap, "to_i", mm_undefined, -1);
     rb_define_method(mm_cMap, "to_f", mm_undefined, -1);
-    rb_define_method(mm_cMap, "to_s", mm_undefined, 0);
+    rb_define_method(mm_cMap, "to_s", rb_any_to_s, 0);
     rb_define_method(mm_cMap, "to_str", mm_to_str, 0);
     rb_define_method(mm_cMap, "inspect", mm_inspect, 0);
     rb_define_method(mm_cMap, "dump", mm_undefined, -1);

@@ -17,3 +17,10 @@
 * corrected strip!
 * corrected mm_bang_i (reverse!, etc)
 * added a small test (make test)
+
+-- 0.1.5
+
+* added str[/a(a)/, 1] for 1.7.1
+* corrected mm_aset (mm_update(str, ...))
+* corrected ==, ===, eql?
+* corrected mm_sub_bang, mm_gsub_bang (to_str)

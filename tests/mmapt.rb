@@ -1,6 +1,7 @@
 #!/usr/bin/ruby
 $LOAD_PATH.unshift *%w{.. . tests}
 require 'mmap'
+require 'ftools'
 require 'runit/testcase'
 require 'runit/cui/testrunner'
 
@@ -9,15 +10,10 @@ $mmap, $str = nil, nil
 class TestMmap < RUNIT::TestCase
    def internal_init
       $mmap.unmap if $mmap
-      mmap = open("tmp/mmap", "w")
-      $str = <<-EOT
-
- some randomly generated text
-
- well, in reality not really, really random
-      EOT
-      mmap.print $str
-      mmap.close
+      file = "mmap.c"
+      file = "../mmap.c" unless File.exist? file
+      File.syscopy file, "tmp/mmap"
+      $str = File.readlines("tmp/mmap", nil)[0]
       assert_kind_of(Mmap, $mmap = Mmap.new("tmp/mmap", "rw"), "<open>")
    end
 
@@ -140,18 +136,18 @@ class TestMmap < RUNIT::TestCase
    end
 
    def test_04_reg
-      assert_equal($mmap.scan(/random/), $str.scan(/random/), "<scan>")
-      assert_equal($mmap.index("really"), $str.index("really"), "<index>")
-      assert_equal($mmap.rindex("really"), $str.rindex("really"), "<rindex>")
+      assert_equal($mmap.scan(/include/), $str.scan(/include/), "<scan>")
+      assert_equal($mmap.index("rb_raise"), $str.index("rb_raise"), "<index>")
+      assert_equal($mmap.rindex("rb_raise"), $str.rindex("rb_raise"), "<rindex>")
       ('a' .. 'z').each do |i|
 	 assert_equal($mmap.index(i), $str.index(i), "<index>")
 	 assert_equal($mmap.rindex(i), $str.rindex(i), "<rindex>")
       end
-      assert_equal($mmap.sub!(/real/, 'XXXX'), $str.sub!(/real/, 'XXXX'), "<sub!>")
+      $mmap.sub!(/GetMmap/, 'XXXX'); $str.sub!(/GetMmap/, 'XXXX')
       assert_equal($mmap.to_str, $str, "<after sub!>")
-      assert_equal($mmap.gsub!(/real/, 'XXXX'), $str.gsub!(/real/, 'XXXX'), "<sub!>")
+      $mmap.gsub!(/GetMmap/, 'XXXX'); $str.gsub!(/GetMmap/, 'XXXX')
       assert_equal($mmap.to_str, $str, "<after gsub!>")
-      assert_equal($mmap.gsub!(/YYYY/, 'XXXX'), $str.gsub!(/YYYY/, 'XXXX'), "<sub!>")
+      $mmap.gsub!(/YYYY/, 'XXXX'); $str.gsub!(/YYYY/, 'XXXX')
       assert_equal($mmap.to_str, $str, "<after gsub!>")
       assert_equal($mmap.split(/\w+/), $str.split(/\w+/), "<split>")
       assert_equal($mmap.split(/\W+/), $str.split(/\W+/), "<split>")
@@ -176,10 +172,21 @@ class TestMmap < RUNIT::TestCase
       internal_modify(:strip!)
       internal_modify(:chop!)
       internal_modify(:chomp!)
+      internal_modify(:squeeze!)
       internal_modify(:tr!, 'abcdefghi', '123456789')
       internal_modify(:tr_s!, 'jklmnopqr', '123456789')
+      internal_modify(:delete!, 'A-Z')
    end
 
+   def test_06_iterate
+      internal_init
+      mmap = []; $mmap.each {|l| mmap << l}
+      str = []; $str.each {|l| str << l}
+      assert_equal(mmap, str, "<each>")
+      mmap = []; $mmap.each_byte {|l| mmap << l}
+      str = []; $str.each_byte {|l| str << l}
+      assert_equal(mmap, str, "<each_byte>")
+   end
 
 end
 
