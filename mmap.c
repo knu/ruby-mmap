@@ -60,7 +60,8 @@ mm_free(t_mm)
 
 #define MM_MODIFY 1
 #define MM_ORIGIN 2
-#define MM_CHANGE 4
+#define MM_CHANGE (MM_MODIFY | 4)
+#define MM_PROTECT 8
 
 #define MM_FROZEN 1
 #define MM_FIXED  2
@@ -94,6 +95,16 @@ mm_unmap(obj)
 }
 
 static VALUE
+mm_freeze(obj)
+    VALUE obj;
+{
+    mm_mmap *t_mm;
+    rb_obj_freeze(obj);
+    GetMmap(obj, t_mm, 0);
+    t_mm->frozen |= MM_FROZEN;
+}
+
+static VALUE
 mm_str(obj, modify)
     VALUE obj;
     int modify;
@@ -102,13 +113,23 @@ mm_str(obj, modify)
     VALUE ret;
 
     GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
-    ret = rb_tainted_str_new2("");
+    if (rb_obj_tainted(obj)) {
+	ret = rb_tainted_str_new2("");
+    }
+    else {
+	ret = rb_str_new2("");
+    }
     if (t_mm->frozen & MM_FROZEN) ret = rb_obj_freeze(ret);
     free(RSTRING(ret)->ptr);
     RSTRING(ret)->ptr = t_mm->addr;
     RSTRING(ret)->len = t_mm->real;
     if (modify & MM_ORIGIN)
 	RSTRING(ret)->orig = ret;
+    if (modify & MM_MODIFY) {
+	if (OBJ_FROZEN(ret)) rb_error_frozen("mmap");
+	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
+	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
+    }
     return ret;
 }
 
@@ -226,8 +247,11 @@ mm_map(argc, argv, obj)
     t_mm->smode = smode;
     t_mm->path = ruby_strdup(path);
     if (smode == O_RDONLY) {
-	t_mm->frozen |= MM_FROZEN;
 	res = rb_obj_freeze(res);
+	t_mm->frozen |= MM_FROZEN;
+    }
+    else {
+	OBJ_TAINT(res);
     }
     return res;
 }
@@ -349,8 +373,8 @@ mm_mprotect(obj, a)
 	else {
 	    t_mm->smode == O_RDONLY;
 	    if (t_mm->vscope == MAP_PRIVATE) {
-		t_mm->frozen |= MM_FROZEN;
 		obj = rb_obj_freeze(obj);
+		t_mm->frozen |= MM_FROZEN;
 	    }
 	}
     }
@@ -595,9 +619,8 @@ mm_gsub_bang(argc, argv, obj)
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = END(0);
-	if (RSTRING(val)->len > plen) {
+	if ((t_mm->real + RSTRING(val)->len - plen) > t_mm->len) {
 	    mm_realloc(t_mm, RSTRING(str)->len + 2 * RSTRING(val)->len);
-	    t_mm->real += RSTRING(val)->len - plen;
 	    RSTRING(str)->ptr = t_mm->addr;
 	}
 	if (RSTRING(val)->len != plen) {
@@ -611,6 +634,7 @@ mm_gsub_bang(argc, argv, obj)
 	memcpy(RSTRING(str)->ptr + start,
 	       RSTRING(val)->ptr, RSTRING(val)->len);
 	RSTRING(str)->len += RSTRING(val)->len - plen;
+	t_mm->real = RSTRING(str)->len;
 	if (BEG(0) == END(0)) {
 	    offset = start + END(0) + mbclen2(RSTRING(str)->ptr[END(0)], pat);
 	    offset += RSTRING(val)->len - plen;
@@ -914,17 +938,17 @@ mm_bang_i(obj, flag, id, argc, argv)
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     str = mm_str(obj, flag);
-    if (flag & MM_ORIGIN) {
-	res = rb_funcall2(str, id, argc, argv);
-	rb_gc_force_recycle(str);
-    }
-    else {
+    if (flag & MM_PROTECT) {
 	VALUE tmp[4];
 	tmp[0] = str;
 	tmp[1] = (VALUE)id;
 	tmp[2] = (VALUE)argc;
 	tmp[3] = (VALUE)argv;
 	res = rb_ensure(mm_protect_bang, (VALUE)tmp, mm_recycle, str);
+    }
+    else {
+	res = rb_funcall2(str, id, argc, argv);
+	rb_gc_force_recycle(str);
     }
     if (res == Qnil) return res;
     GetMmap(obj, t_mm, 0);
@@ -972,7 +996,7 @@ static VALUE
 mm_chop_bang(a)
     VALUE a;
 {
-    return mm_bang_i(a, MM_MODIFY | MM_CHANGE, rb_intern("chop!"), 0, 0);
+    return mm_bang_i(a, MM_CHANGE, rb_intern("chop!"), 0, 0);
 }
 
 static VALUE
@@ -987,7 +1011,7 @@ mm_chomp_bang(argc, argv, obj)
     int argc;
     VALUE *argv, obj;
 {
-    return mm_bang_i(obj, MM_MODIFY | MM_CHANGE, rb_intern("chomp!"), argc, argv);
+    return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("chomp!"), argc, argv);
 }
 
 static VALUE
@@ -995,7 +1019,7 @@ mm_delete_bang(argc, argv, obj)
     int argc;
     VALUE *argv, obj;
 {
-    return mm_bang_i(obj, MM_MODIFY | MM_CHANGE, rb_intern("delete!"), argc, argv);
+    return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("delete!"), argc, argv);
 }
 
 static VALUE
@@ -1003,7 +1027,7 @@ mm_squeeze_bang(argc, argv, obj)
     int argc;
     VALUE *argv, obj;
 {
-    return mm_bang_i(obj, MM_MODIFY | MM_CHANGE, rb_intern("squeeze!"), argc, argv);
+    return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("squeeze!"), argc, argv);
 }
 
 static VALUE
@@ -1013,7 +1037,7 @@ mm_tr_bang(obj, a, b)
     VALUE tmp[2];
     tmp[0] = a;
     tmp[1] = b;
-    return mm_bang_i(obj, MM_MODIFY, rb_intern("tr!"), 2, tmp);
+    return mm_bang_i(obj, MM_MODIFY | MM_PROTECT, rb_intern("tr!"), 2, tmp);
 }
 
 static VALUE
@@ -1023,7 +1047,7 @@ mm_tr_s_bang(obj, a, b)
     VALUE tmp[2];
     tmp[0] = a;
     tmp[1] = b;
-    return mm_bang_i(obj, MM_MODIFY | MM_CHANGE, rb_intern("tr_s!"), 2, tmp);
+    return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("tr_s!"), 2, tmp);
 }
 
 static VALUE
@@ -1193,6 +1217,7 @@ Init_mmap()
     rb_define_method(mm_cMap, "protect", mm_mprotect, 1);
     rb_define_method(mm_cMap, "madvise", mm_madvise, 1);
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
+    rb_define_method(mm_cMap, "freeze", mm_freeze, 1);
     rb_define_method(mm_cMap, "clone", mm_undefined, -1);
     rb_define_method(mm_cMap, "dup", mm_undefined, -1);
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
