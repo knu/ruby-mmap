@@ -1,5 +1,6 @@
 #include <ruby.h>
 #include <fcntl.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -7,12 +8,19 @@
 #include <rubyio.h>
 #include <intern.h>
 #include "version.h"
+#include <re.h>
 
-#if RUBY_VERSION_CODE < 180
-#define StringValue(x) do {				\
-    if (TYPE(x) != T_STRING) x = rb_str_to_str(x);	\
+#ifndef StringValue
+#define StringValue(x) do { 				\
+    if (TYPE(x) != T_STRING) x = rb_str_to_str(x); 	\
 } while (0)
+#endif
+
+#ifndef StringValuePtr
 #define StringValuePtr(x) STR2CSTR(x)
+#endif
+
+#ifndef SafeStringValue
 #define SafeStringValue(x) Check_SafeStr(x)
 #endif
 
@@ -26,8 +34,6 @@
 #define madvise posix_madvise
 #endif
 #endif
-
-#include <re.h>
 
 #define BEG(no) regs->beg[no]
 #define END(no) regs->end[no]
@@ -67,16 +73,8 @@ typedef struct {
     int advice, flag;
     size_t len, real, incr;
     off_t offset;
-    VALUE io;
     char *path;
 } mm_mmap;
-
-static void
-mm_mark(t_mm)
-    mm_mmap *t_mm;
-{
-    rb_gc_mark(t_mm->io);
-}
 
 static void
 mm_free(t_mm)
@@ -154,7 +152,7 @@ mm_str(obj, modify)
     int modify;
 {
     mm_mmap *t_mm;
-    VALUE ret;
+    VALUE ret = Qnil;
 
     GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
     if (modify & MM_MODIFY) {
@@ -204,7 +202,7 @@ extern char *ruby_strdup();
 static void
 mm_expandf(t_mm, len)
     mm_mmap *t_mm;
-    long len;
+    size_t len;
 {
     int fd;
 
@@ -253,7 +251,7 @@ mm_expandf(t_mm, len)
 static void
 mm_realloc(t_mm, len)
     mm_mmap *t_mm;
-    long len;
+    size_t len;
 {
     if (t_mm->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len > t_mm->len) {
@@ -310,10 +308,11 @@ mm_i_options(arg, obj)
 	t_mm->advice = NUM2INT(value);
     }
     else if (strcmp(options, "increment") == 0) {
-	t_mm->incr = NUM2INT(value);
-	if (t_mm->incr < 0) {
-	    rb_raise(rb_eArgError, "Invalid value for increment %d", t_mm->incr);
+	int incr =  NUM2INT(value);
+	if (incr < 0) {
+	    rb_raise(rb_eArgError, "Invalid value for increment %d", incr);
 	}
+	t_mm->incr = incr;
     }
     return Qnil;
 }
@@ -327,7 +326,7 @@ mm_s_alloc(obj)
     VALUE res;
     mm_mmap *t_mm;
 
-    res = Data_Make_Struct(obj, mm_mmap, mm_mark, mm_free, t_mm);
+    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
     t_mm->incr = EXP_INCR_SIZE;
     return res;
 }
@@ -343,7 +342,7 @@ mm_s_new(argc, argv, obj)
     int argc;
 {
     struct stat st;
-    int fd, smode, pmode, vscope, perm, init;
+    int fd, smode = 0, pmode = 0, vscope, perm, init;
     MMAP_RETTYPE addr;
     VALUE res, fname, fdv, vmode, scope, options;
     mm_mmap *t_mm;
@@ -418,7 +417,7 @@ mm_s_new(argc, argv, obj)
 	    pmode = PROT_READ;
 	}
 	else if (strcmp(mode, "w") == 0) {
-	    smode = O_WRONLY;
+	    smode = O_RDWR | O_TRUNC;
 	    pmode = PROT_WRITE;
 	    if (!NIL_P(fdv)) {
 		pmode |= PROT_READ;
@@ -455,7 +454,7 @@ mm_s_new(argc, argv, obj)
     Data_Get_Struct(obj, mm_mmap, t_mm);
     res = obj;
 #else
-    res = Data_Make_Struct(obj, mm_mmap, mm_mark, mm_free, t_mm);
+    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
     t_mm->incr = EXP_INCR_SIZE;
 #endif
     offset = 0;
@@ -508,6 +507,16 @@ mm_s_new(argc, argv, obj)
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
 #endif
+    if (anonymous && TYPE(options) == T_HASH) {
+	VALUE val;
+	char *ptr;
+
+	val = rb_hash_aref(options, rb_str_new2("initialize"));
+	if (!NIL_P(val)) {
+	    ptr = StringValuePtr(val);
+	    memset(addr, ptr[0], size);
+	}
+    }
     t_mm->addr  = addr;
     t_mm->len = size;
     if (!init) t_mm->real = size;
@@ -515,14 +524,14 @@ mm_s_new(argc, argv, obj)
     t_mm->vscope = vscope;
     t_mm->smode = smode;
     t_mm->path = (path)?ruby_strdup(path):(char *)-1;
-    if (!NIL_P(fdv)) {
-	t_mm->io = fname;
-    }
     if (smode == O_RDONLY) {
 	res = rb_obj_freeze(res);
 	t_mm->flag |= MM_FROZEN;
     }
     else {
+	if (smode == O_WRONLY) {
+	    t_mm->flag |= MM_FIXED;
+	}
 	OBJ_TAINT(res);
     }
 #if RUBY_VERSION_CODE < 172
@@ -589,22 +598,21 @@ mm_mprotect(obj, a)
     }
     if ((pmode & PROT_WRITE) && (t_mm->flag & MM_FROZEN)) 
 	rb_error_frozen("mmap");
-    if ((ret = mprotect(t_mm->addr, t_mm->len, pmode)) != 0) {
+    if ((ret = mprotect(t_mm->addr, t_mm->len, pmode | PROT_READ)) != 0) {
 	rb_raise(rb_eArgError, "mprotect(%d)", ret);
     }
     t_mm->pmode = pmode;
     if (pmode & PROT_READ) {
 	if (pmode & PROT_WRITE) t_mm->smode = O_RDWR;
 	else {
-	    t_mm->smode == O_RDONLY;
-	    if (t_mm->vscope == MAP_PRIVATE) {
-		obj = rb_obj_freeze(obj);
-		t_mm->flag |= MM_FROZEN;
-	    }
+	    t_mm->smode = O_RDONLY;
+	    obj = rb_obj_freeze(obj);
+	    t_mm->flag |= MM_FROZEN;
 	}
     }
     else if (pmode & PROT_WRITE) {
-	t_mm->smode == O_WRONLY;
+	t_mm->flag |= MM_FIXED;
+	t_mm->smode = O_WRONLY;
     }
     return obj;
 }
@@ -654,13 +662,13 @@ mm_update(str, beg, len, val)
     if (beg < 0) {
 	beg += str->real;
     }
-    if (beg < 0 || str->real < beg) {
+    if (beg < 0 || str->real < (size_t)beg) {
 	if (beg < 0) {
 	    beg -= str->real;
 	}
 	rb_raise(rb_eIndexError, "index %d out of string", beg);
     }
-    if (str->real < beg + len) {
+    if (str->real < (size_t)(beg + len)) {
 	len = str->real - beg;
     }
 
@@ -674,15 +682,15 @@ mm_update(str, beg, len, val)
     }
 
     if (vall != len) {
-	memmove(str->addr + beg + vall,
-		str->addr + beg + len,
+	memmove((char *)str->addr + beg + vall,
+		(char *)str->addr + beg + len,
 		str->real - (beg + len));
     }
-    if (str->real < beg && len < 0) {
+    if (str->real < (size_t)beg && len < 0) {
 	MEMZERO(str->addr + str->real, char, -len);
     }
     if (vall > 0) {
-	memmove(str->addr+beg, valp, vall);
+	memmove((char *)str->addr + beg, valp, vall);
     }
     str->real += vall - len;
 }
@@ -737,11 +745,9 @@ get_pat(pat)
 }
 
 static int
-mm_correct_backref(t_mm)
-    mm_mmap *t_mm;
+mm_correct_backref()
 {
     VALUE match;
-    struct re_registers *regs;
     int i, start;
 
     match = rb_backref_get();
@@ -765,7 +771,7 @@ mm_sub_bang(argc, argv, obj)
     VALUE *argv;
     VALUE obj;
 {
-    VALUE pat, repl, match, str, res;
+    VALUE pat, repl = Qnil, match, str, res;
     struct re_registers *regs;
     int start, iter = 0;
     int tainted = 0;
@@ -788,7 +794,7 @@ mm_sub_bang(argc, argv, obj)
     pat = get_pat(argv[0]);
     res = Qnil;
     if (rb_reg_search(pat, str, 0, 0) >= 0) {
-	start = mm_correct_backref(t_mm);
+	start = mm_correct_backref();
 	match = rb_backref_get();
 	regs = RMATCH(match)->regs;
 	if (iter) {
@@ -832,7 +838,7 @@ mm_gsub_bang(argc, argv, obj)
     VALUE *argv;
     VALUE obj;
 {
-    VALUE pat, val, repl, match, str;
+    VALUE pat, val, repl = Qnil, match, str;
     struct re_registers *regs;
     long beg, offset;
     int start, iter = 0;
@@ -861,7 +867,7 @@ mm_gsub_bang(argc, argv, obj)
 	return Qnil;
     }
     while (beg >= 0) {
-	start = mm_correct_backref(t_mm);
+	start = mm_correct_backref();
 	match = rb_backref_get();
 	regs = RMATCH(match)->regs;
 	if (iter) {
@@ -911,7 +917,7 @@ static VALUE mm_index __((int, VALUE *, VALUE));
 
 #if RUBY_VERSION_CODE >= 171
 
-static VALUE
+static void
 mm_subpat_set(obj, re, offset, val)
     VALUE obj, re;
     int offset;
@@ -936,7 +942,7 @@ mm_subpat_set(obj, re, offset, val)
     }
     end = RMATCH(match)->END(offset);
     len = end - start;
-    GetMmap(str, t_mm, MM_MODIFY);
+    GetMmap(obj, t_mm, MM_MODIFY);
     mm_update(t_mm, start, len, val);
 }
 
@@ -947,7 +953,7 @@ mm_aset(str, indx, val)
     VALUE str;
     VALUE indx, val;
 {
-    long idx, beg;
+    long idx;
     mm_mmap *t_mm;
 
     GetMmap(str, t_mm, MM_MODIFY);
@@ -958,11 +964,11 @@ mm_aset(str, indx, val)
 	if (idx < 0) {
 	    idx += t_mm->real;
 	}
-	if (idx < 0 || t_mm->real <= idx) {
+	if (idx < 0 || t_mm->real <= (size_t)idx) {
 	    rb_raise(rb_eIndexError, "index %d out of string", idx);
 	}
 	if (FIXNUM_P(val)) {
-	    if (t_mm->real == idx) {
+	    if (t_mm->real == (size_t)idx) {
 		t_mm->real += 1;
 		mm_realloc(t_mm, t_mm->real);
 	    }
@@ -975,7 +981,7 @@ mm_aset(str, indx, val)
 
       case T_REGEXP:
 #if RUBY_VERSION_CODE >= 171
-	  mm_subpat_set(str, 0, indx, val);
+	  mm_subpat_set(str, indx, 0, val);
 #else 
         {
 	    VALUE args[2];
@@ -987,11 +993,15 @@ mm_aset(str, indx, val)
 	return val;
 
       case T_STRING:
-	beg = mm_index(1, &indx, str);
-	if (beg != -1) {
-	    mm_update(t_mm, beg, RSTRING(indx)->len, val);
-	}
-	return val;
+      {
+	  VALUE res;
+
+	  res = mm_index(1, &indx, str);
+	  if (!NIL_P(res)) {
+	      mm_update(t_mm, NUM2LONG(res), RSTRING(indx)->len, val);
+	  }
+	  return val;
+      }
 
       default:
 	/* check if indx is Range */
@@ -1038,6 +1048,8 @@ mm_aset_m(argc, argv, str)
     return mm_aset(str, argv[0], argv[1]);
 }
 
+#if RUBY_VERSION_CODE >= 171
+
 static VALUE
 mm_insert(str, idx, str2)
     VALUE str, idx, str2;
@@ -1055,6 +1067,8 @@ mm_insert(str, idx, str2)
     mm_update(t_mm, pos, 0, str2);
     return str;
 }
+
+#endif
 
 static VALUE mm_aref_m _((int, VALUE *, VALUE));
 
@@ -1188,7 +1202,7 @@ mm_lstrip_bang(str)
     e = t = s + t_mm->real;
     while (s < t && ISSPACE(*s)) s++;
 
-    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
+    if (t_mm->real != (size_t)(t - s) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t - s;
@@ -1213,7 +1227,7 @@ mm_rstrip_bang(str)
     t--;
     while (s <= t && ISSPACE(*t)) t--;
     t++;
-    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
+    if (t_mm->real != (size_t)(t - s) && (t_mm->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     t_mm->real = t - s;
