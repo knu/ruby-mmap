@@ -5,6 +5,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
+
+#if HAVE_SEMCTL && HAVE_SHMCTL
+#include <sys/shm.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#endif
+
 #include <rubyio.h>
 #include <intern.h>
 #include <re.h>
@@ -70,29 +77,22 @@ typedef struct {
     MMAP_RETTYPE addr;
     int smode, pmode, vscope;
     int advice, flag;
+    VALUE key;
+    int semid, shmid;
     size_t len, real, incr;
     off_t offset;
-    char *path;
+    char *path, *template;
 } mm_mmap;
 
-static void
-mm_free(t_mm)
-    mm_mmap *t_mm;
-{
-    if (t_mm->path) {
-	munmap(t_mm->addr, t_mm->len);
-	if (t_mm->path != (char *)-1) {
-	    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
-		truncate(t_mm->path, t_mm->real) == -1) {
-		free(t_mm->path);
-		free(t_mm);
-		rb_raise(rb_eTypeError, "truncate");
-	    }
-	    free(t_mm->path);
-	}
-    }
-    free(t_mm);
-}
+typedef struct {
+    int count;
+    mm_mmap *t;
+} mm_ipc;
+
+typedef struct {
+    VALUE obj, *argv;
+    int flag, id, argc;
+} mm_bang;
 
 #define MM_MODIFY 1
 #define MM_ORIGIN 2
@@ -103,33 +103,194 @@ mm_free(t_mm)
 #define MM_FIXED  (1<<1)
 #define MM_ANON   (1<<2)
 #define MM_LOCK   (1<<3)
+#define MM_IPC    (1<<4)
+#define MM_TMP    (1<<5)
 
-#define GetMmap(obj, t_mm, t_modify)				\
-    Data_Get_Struct(obj, mm_mmap, t_mm);			\
-    if (!t_mm->path) {						\
-	rb_raise(rb_eIOError, "unmapped file");			\
-    }								\
-    if ((t_modify & MM_MODIFY) && (t_mm->flag & MM_FROZEN)) {	\
-	rb_error_frozen("mmap");				\
+#if HAVE_SEMCTL && HAVE_SHMCTL
+static char template[1024];
+
+union semun
+{
+    int val;
+    struct semid_ds *buf;
+    unsigned short int *array;
+    struct seminfo *__buf;
+};
+#endif
+
+static void
+mm_free(i_mm)
+    mm_ipc *i_mm;
+{
+#if HAVE_SEMCTL && HAVE_SHMCTL
+    if (i_mm->t->flag & MM_IPC) {
+	struct shmid_ds buf;
+
+	if (shmctl(i_mm->t->shmid, IPC_STAT, &buf) != -1) {
+	    if (buf.shm_nattch == 1 && (i_mm->t->flag & MM_TMP)) {
+		semctl(i_mm->t->semid, 0, IPC_RMID);
+		if (i_mm->t->template) {
+		    unlink(i_mm->t->template);
+		    free(i_mm->t->template);
+		}
+	    }
+	}
+	shmdt(i_mm->t);
     }
+    else {
+	free(i_mm->t);
+    }
+#endif
+    if (i_mm->t->path) {
+	munmap(i_mm->t->addr, i_mm->t->len);
+	if (i_mm->t->path != (char *)-1) {
+	    if (i_mm->t->real < i_mm->t->len && i_mm->t->vscope != MAP_PRIVATE &&
+		truncate(i_mm->t->path, i_mm->t->real) == -1) {
+		free(i_mm->t->path);
+		free(i_mm);
+		rb_raise(rb_eTypeError, "truncate");
+	    }
+	    free(i_mm->t->path);
+	}
+    }
+    free(i_mm);
+}
+
+static void
+mm_lock(i_mm, wait_lock)
+    mm_ipc *i_mm;
+    int wait_lock;
+{
+#if HAVE_SEMCTL && HAVE_SHMCTL
+    struct sembuf sem_op;
+
+    if (i_mm->t->flag & MM_IPC) {
+	i_mm->count++;
+	if (i_mm->count == 1) {
+	retry:
+	    sem_op.sem_num = 0;
+	    sem_op.sem_op = -1;
+	    sem_op.sem_flg = IPC_NOWAIT;
+	    if (semop(i_mm->t->semid, &sem_op, 1) == -1) {
+		if (errno == EAGAIN) {
+		    if (!wait_lock) {
+			rb_raise(rb_const_get(rb_mErrno, rb_intern("EAGAIN")), "EAGAIN");
+		    }
+		    rb_thread_sleep(1);
+		    goto retry;
+		}
+		rb_sys_fail("semop()");
+	    }
+	}
+   }
+#endif
+}
+
+static void
+mm_unlock(i_mm)
+    mm_ipc *i_mm;
+{
+#if HAVE_SEMCTL && HAVE_SHMCTL
+    struct sembuf sem_op;
+
+    if (i_mm->t->flag & MM_IPC) {
+	i_mm->count--;
+	if (!i_mm->count) {
+	retry:
+	    sem_op.sem_num = 0;
+	    sem_op.sem_op = 1;
+	    sem_op.sem_flg = IPC_NOWAIT;
+	    if (semop(i_mm->t->semid, &sem_op, 1) == -1) {
+		if (errno == EAGAIN) {
+		    rb_thread_sleep(1);
+		    goto retry;
+		}
+		rb_sys_fail("semop()");
+	    }
+	}
+    }
+#endif
+}
+
+#define GetMmap(obj, i_mm, t_modify)					\
+    Data_Get_Struct(obj, mm_ipc, i_mm);					\
+    if (!i_mm->t->path) {						\
+	rb_raise(rb_eIOError, "unmapped file");				\
+    }									\
+    if ((t_modify & MM_MODIFY) && (i_mm->t->flag & MM_FROZEN)) {	\
+	rb_error_frozen("mmap");					\
+    }
+
+static VALUE
+mm_vunlock(obj)
+    VALUE obj;
+{
+    mm_ipc *i_mm;
+
+    GetMmap(obj, i_mm, 0);
+    mm_unlock(i_mm);
+    return Qnil;
+}
+
+static VALUE
+mm_semlock(argc, argv, obj)
+    int argc;
+    VALUE *argv, obj;
+{
+    mm_ipc *i_mm;
+
+    GetMmap(obj, i_mm, 0);
+    if (!(i_mm->t->flag & MM_IPC)) {
+	rb_warning("useless use of #semlock");
+	rb_yield(obj);
+    }
+    else {
+#if HAVE_SEMCTL && HAVE_SHMCTL
+	VALUE a;
+	int wait_lock = Qtrue;
+
+	if (rb_scan_args(argc, argv, "01", &a)) {
+	    wait_lock = RTEST(a);
+	}
+	mm_lock(i_mm, wait_lock);
+	rb_ensure(rb_yield, obj, mm_vunlock, obj);
+#endif
+    }
+    return Qnil;
+}
+
+static VALUE
+mm_ipc_key(obj)
+    VALUE obj;
+{
+    mm_ipc *i_mm;
+
+    GetMmap(obj, i_mm, 0);
+    if (i_mm->t->flag & MM_IPC) {
+	return INT2NUM(i_mm->t->key);
+    }
+    return INT2NUM(-1);
+}
 
 static VALUE
 mm_unmap(obj)
     VALUE obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(obj, t_mm, 0);
-    if (t_mm->path) {
-	munmap(t_mm->addr, t_mm->len);
-	if (t_mm->path != (char *)-1) {
-	    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE &&
-		truncate(t_mm->path, t_mm->real) == -1) {
+    GetMmap(obj, i_mm, 0);
+    if (i_mm->t->path) {
+	mm_lock(i_mm, Qtrue);
+	munmap(i_mm->t->addr, i_mm->t->len);
+	if (i_mm->t->path != (char *)-1) {
+	    if (i_mm->t->real < i_mm->t->len && i_mm->t->vscope != MAP_PRIVATE &&
+		truncate(i_mm->t->path, i_mm->t->real) == -1) {
 		rb_raise(rb_eTypeError, "truncate");
 	    }
-	    free(t_mm->path);
+	    free(i_mm->t->path);
 	}
-	t_mm->path = '\0';
+	i_mm->t->path = '\0';
+	mm_unlock(i_mm);
     }
     return Qnil;
 }
@@ -138,10 +299,10 @@ static VALUE
 mm_freeze(obj)
     VALUE obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     rb_obj_freeze(obj);
-    GetMmap(obj, t_mm, 0);
-    t_mm->flag |= MM_FROZEN;
+    GetMmap(obj, i_mm, 0);
+    i_mm->t->flag |= MM_FROZEN;
     return obj;
 }
 
@@ -150,12 +311,12 @@ mm_str(obj, modify)
     VALUE obj;
     int modify;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     VALUE ret = Qnil;
 
-    GetMmap(obj, t_mm, modify & ~MM_ORIGIN);
+    GetMmap(obj, i_mm, modify & ~MM_ORIGIN);
     if (modify & MM_MODIFY) {
-	if (t_mm->flag & MM_FROZEN) rb_error_frozen("mmap");
+	if (i_mm->t->flag & MM_FROZEN) rb_error_frozen("mmap");
 	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
 	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
     }
@@ -173,8 +334,8 @@ mm_str(obj, modify)
     }
     free(RSTRING(ret)->ptr);
 #endif
-    RSTRING(ret)->ptr = t_mm->addr;
-    RSTRING(ret)->len = t_mm->real;
+    RSTRING(ret)->ptr = i_mm->t->addr;
+    RSTRING(ret)->len = i_mm->t->real;
     if (modify & MM_ORIGIN) {
 #if HAVE_RB_DEFINE_ALLOC_FUNC
 	RSTRING(ret)->aux.shared = ret;
@@ -183,7 +344,7 @@ mm_str(obj, modify)
 	RSTRING(ret)->orig = ret;
 #endif
     }
-    if (t_mm->flag & MM_FROZEN) {
+    if (i_mm->t->flag & MM_FROZEN) {
 	ret = rb_obj_freeze(ret);
     }
     return ret;
@@ -198,66 +359,96 @@ mm_to_str(obj)
  
 extern char *ruby_strdup();
 
-static void
-mm_expandf(t_mm, len)
-    mm_mmap *t_mm;
+typedef struct {
+    mm_ipc *i_mm;
     size_t len;
+} mm_st;
+
+static VALUE
+mm_i_expand(st_mm)
+    mm_st *st_mm;
 {
     int fd;
+    mm_ipc *i_mm = st_mm->i_mm;
+    size_t len = st_mm->len;
 
-    if (t_mm->vscope == MAP_PRIVATE) {
-	rb_raise(rb_eTypeError, "expand for a private map");
-    }
-    if (t_mm->flag & MM_FIXED) {
-	rb_raise(rb_eTypeError, "expand for a fixed map");
-    }
-    if (!t_mm->path || t_mm->path == (char *)-1) {
-	rb_raise(rb_eTypeError, "expand for an anonymous map");
-    }
-    if (munmap(t_mm->addr, t_mm->len)) {
+    if (munmap(i_mm->t->addr, i_mm->t->len)) {
 	rb_raise(rb_eArgError, "munmap failed");
     }
-    if ((fd = open(t_mm->path, t_mm->smode)) == -1) {
-	rb_raise(rb_eArgError, "Can't open %s", t_mm->path);
+    if ((fd = open(i_mm->t->path, i_mm->t->smode)) == -1) {
+	rb_raise(rb_eArgError, "Can't open %s", i_mm->t->path);
     }
-    if (len > t_mm->len) {
-	if (lseek(fd, len - t_mm->len - 1, SEEK_END) == -1) {
-	    rb_raise(rb_eIOError, "Can't lseek %d", len - t_mm->len - 1);
+    if (len > i_mm->t->len) {
+	if (lseek(fd, len - i_mm->t->len - 1, SEEK_END) == -1) {
+	    rb_raise(rb_eIOError, "Can't lseek %d", len - i_mm->t->len - 1);
 	}
 	if (write(fd, "\000", 1) != 1) {
-	    rb_raise(rb_eIOError, "Can't extend %s", t_mm->path);
+	    rb_raise(rb_eIOError, "Can't extend %s", i_mm->t->path);
 	}
     }
-    else if (len < t_mm->len && truncate(t_mm->path, len) == -1) {
-	rb_raise(rb_eIOError, "Can't truncate %s", t_mm->path);
+    else if (len < i_mm->t->len && truncate(i_mm->t->path, len) == -1) {
+	rb_raise(rb_eIOError, "Can't truncate %s", i_mm->t->path);
     }
-    t_mm->addr = mmap(0, len, t_mm->pmode, t_mm->vscope, fd, t_mm->offset);
+    i_mm->t->addr = mmap(0, len, i_mm->t->pmode, i_mm->t->vscope, fd, i_mm->t->offset);
     close(fd);
-    if (t_mm->addr == MAP_FAILED) {
+    if (i_mm->t->addr == MAP_FAILED) {
 	rb_raise(rb_eArgError, "mmap failed");
     }
 #ifdef MADV_NORMAL
-    if (t_mm->advice && madvise(t_mm->addr, len, t_mm->advice) == -1) {
+    if (i_mm->t->advice && madvise(i_mm->t->addr, len, i_mm->t->advice) == -1) {
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
 #endif
-    if ((t_mm->flag & MM_LOCK) && mlock(t_mm->addr, len) == -1) {
+    if ((i_mm->t->flag & MM_LOCK) && mlock(i_mm->t->addr, len) == -1) {
 	rb_raise(rb_eArgError, "mlock(%d)", errno);
     }
-    t_mm->len  = len;
+    i_mm->t->len  = len;
+    return Qnil;
 }
 
 static void
-mm_realloc(t_mm, len)
-    mm_mmap *t_mm;
+mm_expandf(i_mm, len)
+    mm_ipc *i_mm;
     size_t len;
 {
-    if (t_mm->flag & MM_FROZEN) rb_error_frozen("mmap");
-    if (len > t_mm->len) {
-	if ((len - t_mm->len) < t_mm->incr) {
-	    len = t_mm->len + t_mm->incr;
+    int status;
+    mm_st st_mm;
+
+    if (i_mm->t->vscope == MAP_PRIVATE) {
+	rb_raise(rb_eTypeError, "expand for a private map");
+    }
+    if (i_mm->t->flag & MM_FIXED) {
+	rb_raise(rb_eTypeError, "expand for a fixed map");
+    }
+    if (!i_mm->t->path || i_mm->t->path == (char *)-1) {
+	rb_raise(rb_eTypeError, "expand for an anonymous map");
+    }
+    st_mm.i_mm = i_mm;
+    st_mm.len = len;
+    if (i_mm->t->flag & MM_IPC) {
+	mm_lock(i_mm, Qtrue);
+	rb_protect(mm_i_expand, (VALUE)&st_mm, &status);
+	mm_unlock(i_mm);
+	if (status) {
+	    rb_jump_tag(status);
 	}
-	mm_expandf(t_mm, len);
+    }
+    else {
+	mm_i_expand(&st_mm);
+    }
+}
+
+static void
+mm_realloc(i_mm, len)
+    mm_ipc *i_mm;
+    size_t len;
+{
+    if (i_mm->t->flag & MM_FROZEN) rb_error_frozen("mmap");
+    if (len > i_mm->t->len) {
+	if ((len - i_mm->t->len) < i_mm->t->incr) {
+	    len = i_mm->t->len + i_mm->t->incr;
+	}
+	mm_expandf(i_mm, len);
     }
 }
 
@@ -265,56 +456,104 @@ static VALUE
 mm_extend(obj, a)
     VALUE obj, a;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     long len;
 
-    GetMmap(obj, t_mm, MM_MODIFY);
+    GetMmap(obj, i_mm, MM_MODIFY);
     len = NUM2LONG(a);
     if (len > 0) {
-	mm_expandf(t_mm, t_mm->len + len);
+	mm_expandf(i_mm, i_mm->t->len + len);
     }
-    return UINT2NUM(t_mm->len);
+    return UINT2NUM(i_mm->t->len);
 }
 
 static VALUE
 mm_i_options(arg, obj)
     VALUE arg, obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     char *options;
     VALUE key, value;
 
-    Data_Get_Struct(obj, mm_mmap, t_mm);
+    Data_Get_Struct(obj, mm_ipc, i_mm);
     key = rb_ary_entry(arg, 0);
     value = rb_ary_entry(arg, 1);
     key = rb_obj_as_string(key);
     options = StringValuePtr(key);
     if (strcmp(options, "length") == 0) {
-	t_mm->len = NUM2UINT(value);
-	if (t_mm->len <= 0) {
-	    rb_raise(rb_eArgError, "Invalid value for length %d", t_mm->len);
+	i_mm->t->len = NUM2UINT(value);
+	if (i_mm->t->len <= 0) {
+	    rb_raise(rb_eArgError, "Invalid value for length %d", i_mm->t->len);
 	}
-	t_mm->flag |= MM_FIXED;
+	i_mm->t->flag |= MM_FIXED;
     }
     else if (strcmp(options, "offset") == 0) {
-	t_mm->offset = NUM2INT(value);
-	if (t_mm->offset < 0) {
-	    rb_raise(rb_eArgError, "Invalid value for offset %d", t_mm->offset);
+	i_mm->t->offset = NUM2INT(value);
+	if (i_mm->t->offset < 0) {
+	    rb_raise(rb_eArgError, "Invalid value for offset %d", i_mm->t->offset);
 	}
-	t_mm->flag |= MM_FIXED;
+	i_mm->t->flag |= MM_FIXED;
     }
     else if (strcmp(options, "advice") == 0) {
-	t_mm->advice = NUM2INT(value);
+	i_mm->t->advice = NUM2INT(value);
     }
     else if (strcmp(options, "increment") == 0) {
 	int incr =  NUM2INT(value);
 	if (incr < 0) {
 	    rb_raise(rb_eArgError, "Invalid value for increment %d", incr);
 	}
-	t_mm->incr = incr;
+	i_mm->t->incr = incr;
+    }
+    else if (strcmp(options, "initialize") == 0) {
+    }
+#if HAVE_SEMCTL && HAVE_SHMCTL
+    else if (strcmp(options, "ipc") == 0) {
+	if (value != Qtrue && TYPE(value) != T_HASH) {
+	    rb_raise(rb_eArgError, "Expected an Hash for :ipc");
+	}
+	i_mm->t->shmid = value;
+	i_mm->t->flag |= (MM_IPC | MM_TMP);
+    }
+#endif
+    else {
+	rb_warning("Unknown option `%s'", options);
     }
     return Qnil;
 }
+
+#if HAVE_SEMCTL && HAVE_SHMCTL
+
+static VALUE
+mm_i_ipc(arg, obj)
+    VALUE arg, obj;
+{
+    mm_ipc *i_mm;
+    char *options;
+    VALUE key, value;
+
+    Data_Get_Struct(obj, mm_ipc, i_mm);
+    key = rb_ary_entry(arg, 0);
+    value = rb_ary_entry(arg, 1);
+    key = rb_obj_as_string(key);
+    options = StringValuePtr(key);
+    if (strcmp(options, "key") == 0) {
+	i_mm->t->key = rb_funcall2(value, rb_intern("to_int"), 0, 0);
+    }
+    else if (strcmp(options, "permanent") == 0) {
+	if (RTEST(value)) {
+	    i_mm->t->flag &= ~MM_TMP;
+	}
+    }
+    else if (strcmp(options, "mode") == 0) {
+	i_mm->t->semid = NUM2INT(value);
+    }
+    else {
+	rb_warning("Unknown option `%s'", options);
+    }
+    return Qnil;
+}
+
+#endif
 
 static VALUE
 mm_s_new(argc, argv, obj)
@@ -331,10 +570,12 @@ mm_s_alloc(obj)
     VALUE obj;
 {
     VALUE res;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    res = Data_Make_Struct(obj, mm_mmap, 0, mm_free, t_mm);
-    t_mm->incr = EXP_INCR_SIZE;
+    res = Data_Make_Struct(obj, mm_ipc, 0, mm_free, i_mm);
+    i_mm->t = ALLOC_N(mm_mmap, 1);
+    MEMZERO(i_mm->t, mm_mmap, 1);
+    i_mm->t->incr = EXP_INCR_SIZE;
     return res;
 }
 
@@ -347,7 +588,7 @@ mm_init(argc, argv, obj)
     int fd, smode = 0, pmode = 0, vscope, perm, init;
     MMAP_RETTYPE addr;
     VALUE fname, fdv, vmode, scope, options;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     char *path, *mode;
     size_t size = 0;
     off_t offset;
@@ -456,16 +697,91 @@ mm_init(argc, argv, obj)
 	    size = NUM2INT(vmode);
 	}
     }
-    Data_Get_Struct(obj, mm_mmap, t_mm);
+    Data_Get_Struct(obj, mm_ipc, i_mm);
+    if (i_mm->t->flag & MM_FROZEN) {
+	rb_raise(rb_eArgError, "frozen mmap");
+    }
+    i_mm->t->shmid = 0;
+    i_mm->t->semid = 0;
     offset = 0;
     if (options != Qnil) {
 	rb_iterate(rb_each, options, mm_i_options, obj);
-	if (path && (t_mm->len + t_mm->offset) > st.st_size) {
+	if (path && (i_mm->t->len + i_mm->t->offset) > st.st_size) {
 	    rb_raise(rb_eArgError, "invalid value for length (%d) or offset (%d)",
-		     t_mm->len, t_mm->offset);
+		     i_mm->t->len, i_mm->t->offset);
 	}
-	if (t_mm->len) size = t_mm->len;
-	offset = t_mm->offset;
+	if (i_mm->t->len) size = i_mm->t->len;
+	offset = i_mm->t->offset;
+#if HAVE_SEMCTL && HAVE_SHMCTL
+	if (i_mm->t->flag & MM_IPC) {
+	    key_t key;
+	    int shmid, semid, mode;
+	    union semun sem_val;
+	    struct shmid_ds buf;
+	    mm_mmap *data;
+
+	    if (!(vscope & MAP_SHARED)) {
+		rb_warning("Probably it will not do what you expect ...");
+	    }
+	    i_mm->t->key = -1;
+	    i_mm->t->semid = 0;
+	    if (TYPE(i_mm->t->shmid) == T_HASH) {
+		rb_iterate(rb_each, i_mm->t->shmid, mm_i_ipc, obj);
+	    }
+	    i_mm->t->shmid = 0;
+	    if (i_mm->t->semid) {
+		mode = i_mm->t->semid;
+		i_mm->t->semid = 0;
+	    }
+	    else {
+		mode = 0644;
+	    }
+	    if ((int)i_mm->t->key <= 0) {
+		mode |= IPC_CREAT;
+		strcpy(template, "/tmp/ruby_mmap.XXXXXX");
+		if (mkstemp(template) == -1) {
+		    rb_sys_fail("mkstemp()");
+		}
+		if ((key = ftok(template, 'R')) == -1) {
+		    rb_sys_fail("ftok()");
+		}
+	    }
+	    else {
+		key = (key_t)i_mm->t->key;
+	    }
+	    if ((shmid = shmget(key, sizeof(mm_ipc), mode)) == -1) {
+		rb_sys_fail("shmget()");
+	    }
+	    data = shmat(shmid, (void *)0, 0);
+	    if (data == (mm_mmap *)-1) {
+		rb_sys_fail("shmat()");
+	    }
+	    if (i_mm->t->flag & MM_TMP) {
+		if (shmctl(shmid, IPC_RMID, &buf) == -1) {
+		    rb_sys_fail("shmctl()");
+		}
+	    }
+	    if ((semid = semget(key, 1, mode)) == -1) {
+		rb_sys_fail("semget()");
+	    }
+	    if (mode & IPC_CREAT) {
+		sem_val.val = 1;
+		if (semctl(semid, 0, SETVAL, sem_val) == -1) {
+		    rb_sys_fail("semctl()");
+		}
+	    }
+	    memcpy(data, i_mm->t, sizeof(mm_mmap));
+	    free(i_mm->t);
+	    i_mm->t = data;
+	    i_mm->t->key = key;
+	    i_mm->t->semid = semid;
+	    i_mm->t->shmid = shmid;
+	    if (i_mm->t->flag & MM_TMP) {
+		i_mm->t->template = ALLOC_N(char, strlen(template) + 1);
+		strcpy(i_mm->t->template, template);
+	    }
+        }
+#endif
     }
     init = 0;
     if (anonymous) {
@@ -478,21 +794,21 @@ mm_init(argc, argv, obj)
 	}
 	smode = O_RDWR;
 	pmode = PROT_READ | PROT_WRITE;
-	t_mm->flag |= MM_FIXED;
+	i_mm->t->flag |= MM_FIXED | MM_ANON;
     }
     else {
 	if (size == 0 && (smode & O_RDWR)) {
-	    if (lseek(fd, t_mm->incr - 1, SEEK_END) == -1) {
-		rb_raise(rb_eIOError, "Can't lseek %d", t_mm->incr - 1);
+	    if (lseek(fd, i_mm->t->incr - 1, SEEK_END) == -1) {
+		rb_raise(rb_eIOError, "Can't lseek %d", i_mm->t->incr - 1);
 	    }
 	    if (write(fd, "\000", 1) != 1) {
 		rb_raise(rb_eIOError, "Can't extend %s", path);
 	    }
 	    init = 1;
-	    size = t_mm->incr;
+	    size = i_mm->t->incr;
 	}
 	if (!NIL_P(fdv)) {
-	    t_mm->flag |= MM_FIXED;
+	    i_mm->t->flag |= MM_FIXED;
 	}
     }
     addr = mmap(0, size, pmode, vscope, fd, offset);
@@ -503,7 +819,7 @@ mm_init(argc, argv, obj)
 	rb_raise(rb_eArgError, "mmap failed (%d)", errno);
     }
 #ifdef MADV_NORMAL
-    if (t_mm->advice && madvise(addr, size, t_mm->advice) == -1) {
+    if (i_mm->t->advice && madvise(addr, size, i_mm->t->advice) == -1) {
 	rb_raise(rb_eArgError, "madvise(%d)", errno);
     }
 #endif
@@ -517,20 +833,20 @@ mm_init(argc, argv, obj)
 	    memset(addr, ptr[0], size);
 	}
     }
-    t_mm->addr  = addr;
-    t_mm->len = size;
-    if (!init) t_mm->real = size;
-    t_mm->pmode = pmode;
-    t_mm->vscope = vscope;
-    t_mm->smode = smode;
-    t_mm->path = (path)?ruby_strdup(path):(char *)-1;
+    i_mm->t->addr  = addr;
+    i_mm->t->len = size;
+    if (!init) i_mm->t->real = size;
+    i_mm->t->pmode = pmode;
+    i_mm->t->vscope = vscope;
+    i_mm->t->smode = smode & ~O_TRUNC;
+    i_mm->t->path = (path)?ruby_strdup(path):(char *)-1;
     if (smode == O_RDONLY) {
 	obj = rb_obj_freeze(obj);
-	t_mm->flag |= MM_FROZEN;
+	i_mm->t->flag |= MM_FROZEN;
     }
     else {
 	if (smode == O_WRONLY) {
-	    t_mm->flag |= MM_FIXED;
+	    i_mm->t->flag |= MM_FIXED;
 	}
 	OBJ_TAINT(obj);
     }
@@ -542,7 +858,7 @@ mm_msync(argc, argv, obj)
     int argc;
     VALUE *argv, obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     VALUE oflag;
     int ret;
     int flag = MS_SYNC;
@@ -551,12 +867,12 @@ mm_msync(argc, argv, obj)
 	rb_scan_args(argc, argv, "01", &oflag);
 	flag = NUM2INT(oflag);
     }
-    GetMmap(obj, t_mm, MM_MODIFY);
-    if ((ret = msync(t_mm->addr, t_mm->len, flag)) != 0) {
+    GetMmap(obj, i_mm, MM_MODIFY);
+    if ((ret = msync(i_mm->t->addr, i_mm->t->len, flag)) != 0) {
 	rb_raise(rb_eArgError, "msync(%d)", ret);
     }
-    if (t_mm->real < t_mm->len && t_mm->vscope != MAP_PRIVATE)
-	mm_expandf(t_mm, t_mm->real);
+    if (i_mm->t->real < i_mm->t->len && i_mm->t->vscope != MAP_PRIVATE)
+	mm_expandf(i_mm, i_mm->t->real);
     return obj;
 }
 
@@ -564,11 +880,11 @@ static VALUE
 mm_mprotect(obj, a)
     VALUE obj, a;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     int ret, pmode;
     char *smode;
 
-    GetMmap(obj, t_mm, 0);
+    GetMmap(obj, i_mm, 0);
     if (TYPE(a) == T_STRING) {
 	smode = StringValuePtr(a);
 	if (strcmp(smode, "r") == 0) pmode = PROT_READ;
@@ -582,23 +898,23 @@ mm_mprotect(obj, a)
     else {
 	pmode = NUM2INT(a);
     }
-    if ((pmode & PROT_WRITE) && (t_mm->flag & MM_FROZEN)) 
+    if ((pmode & PROT_WRITE) && (i_mm->t->flag & MM_FROZEN)) 
 	rb_error_frozen("mmap");
-    if ((ret = mprotect(t_mm->addr, t_mm->len, pmode | PROT_READ)) != 0) {
+    if ((ret = mprotect(i_mm->t->addr, i_mm->t->len, pmode | PROT_READ)) != 0) {
 	rb_raise(rb_eArgError, "mprotect(%d)", ret);
     }
-    t_mm->pmode = pmode;
+    i_mm->t->pmode = pmode;
     if (pmode & PROT_READ) {
-	if (pmode & PROT_WRITE) t_mm->smode = O_RDWR;
+	if (pmode & PROT_WRITE) i_mm->t->smode = O_RDWR;
 	else {
-	    t_mm->smode = O_RDONLY;
+	    i_mm->t->smode = O_RDONLY;
 	    obj = rb_obj_freeze(obj);
-	    t_mm->flag |= MM_FROZEN;
+	    i_mm->t->flag |= MM_FROZEN;
 	}
     }
     else if (pmode & PROT_WRITE) {
-	t_mm->flag |= MM_FIXED;
-	t_mm->smode = O_WRONLY;
+	i_mm->t->flag |= MM_FIXED;
+	i_mm->t->smode = O_WRONLY;
     }
     return obj;
 }
@@ -608,13 +924,13 @@ static VALUE
 mm_madvise(obj, a)
     VALUE obj, a;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     
-    GetMmap(obj, t_mm, 0);
-    if (madvise(t_mm->addr, t_mm->len, NUM2INT(a)) == -1) {
+    GetMmap(obj, i_mm, 0);
+    if (madvise(i_mm->t->addr, i_mm->t->len, NUM2INT(a)) == -1) {
 	rb_raise(rb_eTypeError, "madvise(%d)", errno);
     }
-    t_mm->advice = NUM2INT(a);
+    i_mm->t->advice = NUM2INT(a);
     return Qnil;
 }
 #endif
@@ -622,10 +938,10 @@ mm_madvise(obj, a)
 #define StringMmap(b, bp, bl)						   \
 do {									   \
     if (TYPE(b) == T_DATA && RDATA(b)->dfree == (RUBY_DATA_FUNC)mm_free) { \
-	mm_mmap *b_mm;							   \
+	mm_ipc *b_mm;							   \
 	GetMmap(b, b_mm, 0);						   \
-	bp = b_mm->addr;						   \
-	bl = b_mm->real;						   \
+	bp = b_mm->t->addr;						   \
+	bl = b_mm->t->real;						   \
     }									   \
     else {								   \
 	bp = StringValuePtr(b);						   \
@@ -635,7 +951,7 @@ do {									   \
 
 static void
 mm_update(str, beg, len, val)
-    mm_mmap *str;
+    mm_ipc *str;
     VALUE val;
     long beg;
     long len;
@@ -643,42 +959,48 @@ mm_update(str, beg, len, val)
     char *valp;
     long vall;
 
-    if (str->flag & MM_FROZEN) rb_error_frozen("mmap");
+    if (str->t->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len < 0) rb_raise(rb_eIndexError, "negative length %d", len);
+    mm_lock(str);
     if (beg < 0) {
-	beg += str->real;
+	beg += str->t->real;
     }
-    if (beg < 0 || str->real < (size_t)beg) {
+    if (beg < 0 || str->t->real < (size_t)beg) {
 	if (beg < 0) {
-	    beg -= str->real;
+	    beg -= str->t->real;
 	}
+	mm_unlock(str);
 	rb_raise(rb_eIndexError, "index %d out of string", beg);
     }
-    if (str->real < (size_t)(beg + len)) {
-	len = str->real - beg;
+    if (str->t->real < (size_t)(beg + len)) {
+	len = str->t->real - beg;
     }
 
+    mm_unlock(str);
     StringMmap(val, valp, vall);
+    mm_lock(str);
 
-    if ((str->flag & MM_FIXED) && vall != len) {
+    if ((str->t->flag & MM_FIXED) && vall != len) {
+	mm_unlock(str);
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
     if (len < vall) {
-	mm_realloc(str, str->real + vall - len);
+	mm_realloc(str, str->t->real + vall - len);
     }
 
     if (vall != len) {
-	memmove((char *)str->addr + beg + vall,
-		(char *)str->addr + beg + len,
-		str->real - (beg + len));
+	memmove((char *)str->t->addr + beg + vall,
+		(char *)str->t->addr + beg + len,
+		str->t->real - (beg + len));
     }
-    if (str->real < (size_t)beg && len < 0) {
-	MEMZERO(str->addr + str->real, char, -len);
+    if (str->t->real < (size_t)beg && len < 0) {
+	MEMZERO(str->t->addr + str->t->real, char, -len);
     }
     if (vall > 0) {
-	memmove((char *)str->addr + beg, valp, vall);
+	memmove((char *)str->t->addr + beg, valp, vall);
     }
-    str->real += vall - len;
+    str->t->real += vall - len;
+    mm_unlock(str);
 }
 
 static VALUE
@@ -752,17 +1074,18 @@ mm_correct_backref()
 }
 
 static VALUE
-mm_sub_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv;
-    VALUE obj;
+mm_sub_bang_int(bang_st)
+    mm_bang *bang_st;
 {
+    int argc = bang_st->argc;
+    VALUE *argv = bang_st->argv;
+    VALUE obj = bang_st->obj;
     VALUE pat, repl = Qnil, match, str, res;
     struct re_registers *regs;
     int start, iter = 0;
     int tainted = 0;
     long plen;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
     if (argc == 1 && rb_block_given_p()) {
 	iter = 1;
@@ -774,7 +1097,7 @@ mm_sub_bang(argc, argv, obj)
     else {
 	rb_raise(rb_eArgError, "wrong # of arguments(%d for 2)", argc);
     }
-    GetMmap(obj, t_mm, MM_MODIFY);
+    GetMmap(obj, i_mm, MM_MODIFY);
     str = mm_str(obj, MM_MODIFY | MM_ORIGIN);
 
     pat = get_pat(argv[0]);
@@ -796,11 +1119,11 @@ mm_sub_bang(argc, argv, obj)
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = END(0) - BEG(0);
 	if (RSTRING(repl)->len > plen) {
-	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(repl)->len - plen);
-	    RSTRING(str)->ptr = t_mm->addr;
+	    mm_realloc(i_mm, RSTRING(str)->len + RSTRING(repl)->len - plen);
+	    RSTRING(str)->ptr = i_mm->t->addr;
 	}
 	if (RSTRING(repl)->len != plen) {
-	    if (t_mm->flag & MM_FIXED) {
+	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
 	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(repl)->len,
@@ -809,7 +1132,7 @@ mm_sub_bang(argc, argv, obj)
 	}
 	memcpy(RSTRING(str)->ptr + start + BEG(0),
 	       RSTRING(repl)->ptr, RSTRING(repl)->len);
-	t_mm->real += RSTRING(repl)->len - plen;
+	i_mm->t->real += RSTRING(repl)->len - plen;
 	if (tainted) OBJ_TAINT(obj);
 
 	res = obj;
@@ -819,18 +1142,43 @@ mm_sub_bang(argc, argv, obj)
 }
 
 static VALUE
-mm_gsub_bang(argc, argv, obj)
+mm_sub_bang(argc, argv, obj)
     int argc;
     VALUE *argv;
     VALUE obj;
 {
+    VALUE res;
+    mm_bang bang_st;
+    mm_ipc *i_mm;
+
+    bang_st.argc = argc;
+    bang_st.argv = argv;
+    bang_st.obj = obj;
+    GetMmap(obj, i_mm, MM_MODIFY);
+    if (i_mm->t->flag & MM_IPC) {
+	mm_lock(i_mm, Qtrue);
+	res = rb_ensure(mm_sub_bang_int, (VALUE)&bang_st, mm_vunlock, obj);
+    }
+    else {
+	res = mm_sub_bang_int(&bang_st);
+    }
+    return res;
+}
+
+static VALUE
+mm_gsub_bang_int(bang_st)
+    mm_bang *bang_st;
+{
+    int argc = bang_st->argc;
+    VALUE *argv = bang_st->argv;
+    VALUE obj = bang_st->obj;
     VALUE pat, val, repl = Qnil, match, str;
     struct re_registers *regs;
     long beg, offset;
     int start, iter = 0;
     int tainted = 0;
     long plen;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
     if (argc == 1 && rb_block_given_p()) {
 	iter = 1;
@@ -842,7 +1190,7 @@ mm_gsub_bang(argc, argv, obj)
     else {
 	rb_raise(rb_eArgError, "wrong # of arguments(%d for 2)", argc);
     }
-    GetMmap(obj, t_mm, MM_MODIFY);
+    GetMmap(obj, i_mm, MM_MODIFY);
     str = mm_str(obj, MM_MODIFY | MM_ORIGIN);
 
     pat = get_pat(argv[0]);
@@ -868,11 +1216,11 @@ mm_gsub_bang(argc, argv, obj)
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = END(0) - BEG(0);
-	if ((t_mm->real + RSTRING(val)->len - plen) > t_mm->len) {
-	    mm_realloc(t_mm, RSTRING(str)->len + RSTRING(val)->len - plen);
+	if ((i_mm->t->real + RSTRING(val)->len - plen) > i_mm->t->len) {
+	    mm_realloc(i_mm, RSTRING(str)->len + RSTRING(val)->len - plen);
 	}
 	if (RSTRING(val)->len != plen) {
-	    if (t_mm->flag & MM_FIXED) {
+	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
 	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(val)->len,
@@ -882,7 +1230,7 @@ mm_gsub_bang(argc, argv, obj)
 	memcpy(RSTRING(str)->ptr + start + BEG(0),
 	       RSTRING(val)->ptr, RSTRING(val)->len);
 	RSTRING(str)->len += RSTRING(val)->len - plen;
-	t_mm->real = RSTRING(str)->len;
+	i_mm->t->real = RSTRING(str)->len;
 	if (BEG(0) == END(0)) {
 	    offset = start + END(0) + mbclen2(RSTRING(str)->ptr[END(0)], pat);
 	    offset += RSTRING(val)->len - plen;
@@ -899,6 +1247,30 @@ mm_gsub_bang(argc, argv, obj)
     return obj;
 }
 
+static VALUE
+mm_gsub_bang(argc, argv, obj)
+    int argc;
+    VALUE *argv;
+    VALUE obj;
+{
+    VALUE res;
+    mm_bang bang_st;
+    mm_ipc *i_mm;
+
+    bang_st.argc = argc;
+    bang_st.argv = argv;
+    bang_st.obj = obj;
+    GetMmap(obj, i_mm, MM_MODIFY);
+    if (i_mm->t->flag & MM_IPC) {
+	mm_lock(i_mm, Qtrue);
+	res = rb_ensure(mm_gsub_bang_int, (VALUE)&bang_st, mm_vunlock, obj);
+    }
+    else {
+	res = mm_gsub_bang_int(&bang_st);
+    }
+    return res;
+}
+
 static VALUE mm_index __((int, VALUE *, VALUE));
 
 #if HAVE_RB_DEFINE_ALLOC_FUNC
@@ -911,7 +1283,7 @@ mm_subpat_set(obj, re, offset, val)
 {
     VALUE str, match;
     int start, end, len;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     
     str = mm_str(obj, MM_MODIFY | MM_ORIGIN);
     if (rb_reg_search(re, str, 0, 0) < 0) {
@@ -928,8 +1300,8 @@ mm_subpat_set(obj, re, offset, val)
     }
     end = RMATCH(match)->END(offset);
     len = end - start;
-    GetMmap(obj, t_mm, MM_MODIFY);
-    mm_update(t_mm, start, len, val);
+    GetMmap(obj, i_mm, MM_MODIFY);
+    mm_update(i_mm, start, len, val);
 }
 
 #endif
@@ -940,28 +1312,28 @@ mm_aset(str, indx, val)
     VALUE indx, val;
 {
     long idx;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(str, t_mm, MM_MODIFY);
+    GetMmap(str, i_mm, MM_MODIFY);
     switch (TYPE(indx)) {
       case T_FIXNUM:
       num_index:
 	idx = NUM2INT(indx);
 	if (idx < 0) {
-	    idx += t_mm->real;
+	    idx += i_mm->t->real;
 	}
-	if (idx < 0 || t_mm->real <= (size_t)idx) {
+	if (idx < 0 || i_mm->t->real <= (size_t)idx) {
 	    rb_raise(rb_eIndexError, "index %d out of string", idx);
 	}
 	if (FIXNUM_P(val)) {
-	    if (t_mm->real == (size_t)idx) {
-		t_mm->real += 1;
-		mm_realloc(t_mm, t_mm->real);
+	    if (i_mm->t->real == (size_t)idx) {
+		i_mm->t->real += 1;
+		mm_realloc(i_mm, i_mm->t->real);
 	    }
-	    ((char *)t_mm->addr)[idx] = NUM2INT(val) & 0xff;
+	    ((char *)i_mm->t->addr)[idx] = NUM2INT(val) & 0xff;
 	}
 	else {
-	    mm_update(t_mm, idx, 1, val);
+	    mm_update(i_mm, idx, 1, val);
 	}
 	return val;
 
@@ -984,7 +1356,7 @@ mm_aset(str, indx, val)
 
 	  res = mm_index(1, &indx, str);
 	  if (!NIL_P(res)) {
-	      mm_update(t_mm, NUM2LONG(res), RSTRING(indx)->len, val);
+	      mm_update(i_mm, NUM2LONG(res), RSTRING(indx)->len, val);
 	  }
 	  return val;
       }
@@ -993,8 +1365,8 @@ mm_aset(str, indx, val)
 	/* check if indx is Range */
 	{
 	    long beg, len;
-	    if (rb_range_beg_len(indx, &beg, &len, t_mm->real, 2)) {
-		mm_update(t_mm, beg, len, val);
+	    if (rb_range_beg_len(indx, &beg, &len, i_mm->t->real, 2)) {
+		mm_update(i_mm, beg, len, val);
 		return val;
 	    }
 	}
@@ -1009,9 +1381,9 @@ mm_aset_m(argc, argv, str)
     VALUE *argv;
     VALUE str;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(str, t_mm, MM_MODIFY);
+    GetMmap(str, i_mm, MM_MODIFY);
     if (argc == 3) {
 	long beg, len;
 
@@ -1024,7 +1396,7 @@ mm_aset_m(argc, argv, str)
 	{
 	    beg = NUM2INT(argv[0]);
 	    len = NUM2INT(argv[1]);
-	    mm_update(t_mm, beg, len, argv[2]);
+	    mm_update(i_mm, beg, len, argv[2]);
 	}
 	return argv[2];
     }
@@ -1040,17 +1412,17 @@ static VALUE
 mm_insert(str, idx, str2)
     VALUE str, idx, str2;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     long pos = NUM2LONG(idx);
 
-    GetMmap(str, t_mm, MM_MODIFY);
+    GetMmap(str, i_mm, MM_MODIFY);
     if (pos == -1) {
 	pos = RSTRING(str)->len;
     }
     else if (pos < 0) {
 	pos++;
     }
-    mm_update(t_mm, pos, 0, str2);
+    mm_update(i_mm, pos, 0, str2);
     return str;
 }
 
@@ -1088,25 +1460,27 @@ mm_cat(str, ptr, len)
     const char *ptr;
     long len;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
     char *sptr;
 
-    GetMmap(str, t_mm, MM_MODIFY);
+    GetMmap(str, i_mm, MM_MODIFY);
     if (len > 0) {
 	int poffset = -1;
-	sptr = (char *)t_mm->addr;
+	sptr = (char *)i_mm->t->addr;
 
 	if (sptr <= ptr &&
-	    ptr < sptr + t_mm->real) {
+	    ptr < sptr + i_mm->t->real) {
 	    poffset = ptr - sptr;
 	}
-	mm_realloc(t_mm, t_mm->real + len);
-	sptr = (char *)t_mm->addr;
+	mm_lock(i_mm, Qtrue);
+	mm_realloc(i_mm, i_mm->t->real + len);
+	sptr = (char *)i_mm->t->addr;
 	if (ptr) {
 	    if (poffset >= 0) ptr = sptr + poffset;
-	    memcpy(sptr + t_mm->real, ptr, len);
+	    memcpy(sptr + i_mm->t->real, ptr, len);
 	}
-	t_mm->real += len;
+	i_mm->t->real += len;
+	mm_unlock(i_mm);
     }
     return str;
 }
@@ -1142,31 +1516,33 @@ mm_strip_bang(str)
     VALUE str;
 {
     char *s, *t, *e;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(str, t_mm, MM_MODIFY);
-    s = (char *)t_mm->addr;
-    e = t = s + t_mm->real;
+    GetMmap(str, i_mm, MM_MODIFY);
+    mm_lock(i_mm, Qtrue);
+    s = (char *)i_mm->t->addr;
+    e = t = s + i_mm->t->real;
     while (s < t && ISSPACE(*s)) s++;
     t--;
     while (s <= t && ISSPACE(*t)) t--;
     t++;
 
-    if (t_mm->real != (t - s) && (t_mm->flag & MM_FIXED)) {
+    if (i_mm->t->real != (t - s) && (i_mm->t->flag & MM_FIXED)) {
+	mm_unlock(i_mm);
         rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
-    t_mm->real = t-s;
-    if (s > (char *)t_mm->addr) { 
-        memmove(t_mm->addr, s, t_mm->real);
-        ((char *)t_mm->addr)[t_mm->real] = '\0';
+    i_mm->t->real = t-s;
+    if (s > (char *)i_mm->t->addr) { 
+        memmove(i_mm->t->addr, s, i_mm->t->real);
+        ((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
     }
     else if (t < e) {
-        ((char *)t_mm->addr)[t_mm->real] = '\0';
+        ((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
     }
     else {
-        return Qnil;
+        str = Qnil;
     }
-
+    mm_unlock(i_mm);
     return str;
 }
 
@@ -1177,22 +1553,26 @@ mm_lstrip_bang(str)
     VALUE str;
 {
     char *s, *t, *e;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(str, t_mm, MM_MODIFY);
-    s = (char *)t_mm->addr;
-    e = t = s + t_mm->real;
+    GetMmap(str, i_mm, MM_MODIFY);
+    mm_lock(i_mm, Qtrue);
+    s = (char *)i_mm->t->addr;
+    e = t = s + i_mm->t->real;
     while (s < t && ISSPACE(*s)) s++;
 
-    if (t_mm->real != (size_t)(t - s) && (t_mm->flag & MM_FIXED)) {
+    if (i_mm->t->real != (size_t)(t - s) && (i_mm->t->flag & MM_FIXED)) {
+	mm_unlock(i_mm);
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
-    t_mm->real = t - s;
-    if (s > (char *)t_mm->addr) { 
-	memmove(t_mm->addr, s, t_mm->real);
-	((char *)t_mm->addr)[t_mm->real] = '\0';
+    i_mm->t->real = t - s;
+    if (s > (char *)i_mm->t->addr) { 
+	memmove(i_mm->t->addr, s, i_mm->t->real);
+	((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
+	mm_unlock(i_mm);
 	return str;
     }
+    mm_unlock(i_mm);
     return Qnil;
 }
 
@@ -1201,22 +1581,26 @@ mm_rstrip_bang(str)
     VALUE str;
 {
     char *s, *t, *e;
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(str, t_mm, MM_MODIFY);
-    s = (char *)t_mm->addr;
-    e = t = s + t_mm->real;
+    GetMmap(str, i_mm, MM_MODIFY);
+    mm_lock(i_mm, Qtrue);
+    s = (char *)i_mm->t->addr;
+    e = t = s + i_mm->t->real;
     t--;
     while (s <= t && ISSPACE(*t)) t--;
     t++;
-    if (t_mm->real != (size_t)(t - s) && (t_mm->flag & MM_FIXED)) {
+    if (i_mm->t->real != (size_t)(t - s) && (i_mm->t->flag & MM_FIXED)) {
+	mm_unlock(i_mm);
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
-    t_mm->real = t - s;
+    i_mm->t->real = t - s;
     if (t < e) {
-	((char *)t_mm->addr)[t_mm->real] = '\0';
+	((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
+	mm_unlock(i_mm);
 	return str;
     }
+    mm_unlock(i_mm);
     return Qnil;
 }
 
@@ -1285,15 +1669,15 @@ mm_equal(a, b)
     VALUE a, b;
 {
     VALUE result;
-    mm_mmap *t_mm, *u_mm;
+    mm_ipc *i_mm, *u_mm;
 
     if (a == b) return Qtrue;
     if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
 	return Qfalse;
 
-    GetMmap(a, t_mm, 0);
+    GetMmap(a, i_mm, 0);
     GetMmap(b, u_mm, 0);
-    if (t_mm->real != u_mm->real)
+    if (i_mm->t->real != u_mm->t->real)
         return Qfalse;
     a = mm_str(a, MM_ORIGIN);
     b = mm_str(b, MM_ORIGIN);
@@ -1308,15 +1692,15 @@ mm_eql(a, b)
     VALUE a, b;
 {
     VALUE result;
-    mm_mmap *t_mm, *u_mm;
+    mm_ipc *i_mm, *u_mm;
     
     if (a == b) return Qtrue;
     if (TYPE(b) != T_DATA || RDATA(b)->dfree != (RUBY_DATA_FUNC)mm_free)
 	return Qfalse;
 
-    GetMmap(a, t_mm, 0);
+    GetMmap(a, i_mm, 0);
     GetMmap(b, u_mm, 0);
-    if (t_mm->real != u_mm->real)
+    if (i_mm->t->real != u_mm->t->real)
         return Qfalse;
     a = mm_str(a, MM_ORIGIN);
     b = mm_str(b, MM_ORIGIN);
@@ -1343,20 +1727,20 @@ static VALUE
 mm_size(a)
     VALUE a;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(a, t_mm, 0);
-    return UINT2NUM(t_mm->real);
+    GetMmap(a, i_mm, 0);
+    return UINT2NUM(i_mm->t->real);
 }
 
 static VALUE
 mm_empty(a)
     VALUE a;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    GetMmap(a, t_mm, 0);
-    if (t_mm->real == 0) return Qtrue;
+    GetMmap(a, i_mm, 0);
+    if (i_mm->t->real == 0) return Qtrue;
     return Qfalse;
 }
 
@@ -1376,33 +1760,59 @@ mm_recycle(str)
 }
 
 static VALUE
+mm_i_bang(bang_st)
+    mm_bang *bang_st;
+{
+    VALUE str, res;
+    mm_ipc *i_mm;
+    
+    str = mm_str(bang_st->obj, bang_st->flag);
+    if (bang_st->flag & MM_PROTECT) {
+	VALUE tmp[4];
+	tmp[0] = str;
+	tmp[1] = (VALUE)bang_st->id;
+	tmp[2] = (VALUE)bang_st->argc;
+	tmp[3] = (VALUE)bang_st->argv;
+	res = rb_ensure(mm_protect_bang, (VALUE)tmp, mm_recycle, str);
+    }
+    else {
+	res = rb_funcall2(str, bang_st->id, bang_st->argc, bang_st->argv);
+	rb_gc_force_recycle(str);
+    }
+    if (res != Qnil) {
+	GetMmap(bang_st->obj, i_mm, 0);
+	i_mm->t->real = RSTRING(str)->len;
+    }
+    return res;
+}
+
+
+static VALUE
 mm_bang_i(obj, flag, id, argc, argv)
     VALUE obj, *argv;
     int flag, id, argc;
 {
-    VALUE str, res;
-    mm_mmap *t_mm;
+    VALUE res;
+    mm_ipc *i_mm;
+    mm_bang bang_st;
 
-    GetMmap(obj, t_mm, 0);
-    if ((flag & MM_CHANGE) && (t_mm->flag & MM_FIXED)) {
+    GetMmap(obj, i_mm, 0);
+    if ((flag & MM_CHANGE) && (i_mm->t->flag & MM_FIXED)) {
 	rb_raise(rb_eTypeError, "try to change the size of a fixed map");
     }
-    str = mm_str(obj, flag);
-    if (flag & MM_PROTECT) {
-	VALUE tmp[4];
-	tmp[0] = str;
-	tmp[1] = (VALUE)id;
-	tmp[2] = (VALUE)argc;
-	tmp[3] = (VALUE)argv;
-	res = rb_ensure(mm_protect_bang, (VALUE)tmp, mm_recycle, str);
+    bang_st.obj = obj;
+    bang_st.flag = flag;
+    bang_st.id = id;
+    bang_st.argc = argc;
+    bang_st.argv = argv;
+    if (i_mm->t->flag & MM_IPC) {
+	mm_lock(i_mm, Qtrue);
+	res = rb_ensure(mm_i_bang, (VALUE)&bang_st, mm_vunlock, obj);
     }
     else {
-	res = rb_funcall2(str, id, argc, argv);
-	rb_gc_force_recycle(str);
+	res = mm_i_bang(&bang_st);
     }
     if (res == Qnil) return res;
-    GetMmap(obj, t_mm, 0);
-    t_mm->real = RSTRING(str)->len;
     return (flag & MM_ORIGIN)?res:obj;
 
 }
@@ -1659,16 +2069,19 @@ static VALUE
 mm_mlock(obj)
     VALUE obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    Data_Get_Struct(obj, mm_mmap, t_mm);
-    if (t_mm->flag & MM_LOCK) {
+    Data_Get_Struct(obj, mm_ipc, i_mm);
+    if (i_mm->t->flag & MM_LOCK) {
 	return obj;
     }
-    if (mlock(t_mm->addr, t_mm->len) == -1) {
+    if (i_mm->t->flag & MM_ANON) {
+	rb_raise(rb_eArgError, "mlock(anonymous)");
+    }
+    if (mlock(i_mm->t->addr, i_mm->t->len) == -1) {
 	rb_raise(rb_eArgError, "mlock(%d)", errno);
     }
-    t_mm->flag |= MM_LOCK;
+    i_mm->t->flag |= MM_LOCK;
     return obj;
 }
 
@@ -1676,16 +2089,16 @@ static VALUE
 mm_munlock(obj)
     VALUE obj;
 {
-    mm_mmap *t_mm;
+    mm_ipc *i_mm;
 
-    Data_Get_Struct(obj, mm_mmap, t_mm);
-    if (!(t_mm->flag & MM_LOCK)) {
+    Data_Get_Struct(obj, mm_ipc, i_mm);
+    if (!(i_mm->t->flag & MM_LOCK)) {
 	return obj;
     }
-    if (munlock(t_mm->addr, t_mm->len) == -1) {
+    if (munlock(i_mm->t->addr, i_mm->t->len) == -1) {
 	rb_raise(rb_eArgError, "munlock(%d)", errno);
     }
-    t_mm->flag &= ~MM_LOCK;
+    i_mm->t->flag &= ~MM_LOCK;
     return obj;
 }
 
@@ -1885,4 +2298,6 @@ Init_mmap()
 
     rb_define_method(mm_cMap, "slice", mm_aref_m, -1);
     rb_define_method(mm_cMap, "slice!", mm_slice_bang, -1);
+    rb_define_method(mm_cMap, "semlock", mm_semlock, -1);
+    rb_define_method(mm_cMap, "ipc_key", mm_ipc_key, 0);
 }

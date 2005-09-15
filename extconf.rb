@@ -21,6 +21,14 @@ dir_config("mmap")
    end
 end
 
+if enable_config("ipc")
+   unless have_func("semctl") && have_func("shmctl")
+      $stderr.puts "\tIPC will not be available"
+   end
+end
+
+$CFLAGS += " -DRUBYLIBDIR='\"#{CONFIG['rubylibdir']}\"'"
+
 create_makefile "mmap"
 
 begin
