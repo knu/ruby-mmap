@@ -232,6 +232,11 @@ mm_vunlock(obj)
     return Qnil;
 }
 
+/*
+ * call-seq: semlock
+ *
+ * Create a lock
+ */
 static VALUE
 mm_semlock(argc, argv, obj)
     int argc;
@@ -259,6 +264,11 @@ mm_semlock(argc, argv, obj)
     return Qnil;
 }
 
+/*
+ * call-seq: ipc_key
+ *
+ * Get the ipc key
+ */
 static VALUE
 mm_ipc_key(obj)
     VALUE obj;
@@ -272,6 +282,14 @@ mm_ipc_key(obj)
     return INT2NUM(-1);
 }
 
+/*
+ * Document-method: munmap
+ * Document-method: unmap
+ *
+ * call-seq: munmap
+ *
+ * terminate the association
+ */
 static VALUE
 mm_unmap(obj)
     VALUE obj;
@@ -295,6 +313,11 @@ mm_unmap(obj)
     return Qnil;
 }
 
+/*
+ * call-seq: freeze
+ *
+ * freeze the current file 
+ */
 static VALUE
 mm_freeze(obj)
     VALUE obj;
@@ -350,6 +373,11 @@ mm_str(obj, modify)
     return ret;
 }
 
+/*
+ * call-seq: to_str
+ *
+ * Convert object to a string
+ */
 static VALUE
 mm_to_str(obj)
     VALUE obj;
@@ -452,6 +480,12 @@ mm_realloc(i_mm, len)
     }
 }
 
+/*
+ * call-seq:
+ *   extend(count)
+ *
+ * add <em>count</em> bytes to the file (i.e. pre-extend the file) 
+ */
 static VALUE
 mm_extend(obj, a)
     VALUE obj, a;
@@ -555,6 +589,48 @@ mm_i_ipc(arg, obj)
 
 #endif
 
+/*
+ * call-seq:
+ *  new(file, mode = "r", protection = Mmap::MAP_SHARED, options = {})
+ *
+ * create a new Mmap object
+ * 
+ * * <em>file</em>
+ * 
+ *   Pathname of the file, if <em>nil</em> is given an anonymous map
+ *   is created <em>Mmanp::MAP_ANON</em>
+ * 
+ * * <em>mode</em>
+ * 
+ *   Mode to open the file, it can be "r", "w", "rw", "a"
+ * 
+ * * <em>protection</em>
+ * 
+ *   specify the nature of the mapping
+ * 
+ *   * <em>Mmap::MAP_SHARED</em>
+ * 
+ *     Creates a mapping that's shared with all other processes 
+ *     mapping the same areas of the file. 
+ *     The default value is <em>Mmap::MAP_SHARED</em>
+ * 
+ *   * <em>Mmap::MAP_PRIVATE</em>
+ * 
+ *     Creates a private copy-on-write mapping, so changes to the
+ *     contents of the mmap object will be private to this process
+ * 
+ * * <em>options</em>
+ * 
+ *   Hash. If one of the options <em>length</em> or <em>offset</em>
+ *   is specified it will not possible to modify the size of
+ *   the mapped file.
+ * 
+ *   length:: maps <em>length</em> bytes from the file
+ * 
+ *   offset:: the mapping begin at <em>offset</em>
+ * 
+ *   advice:: the type of the access (see #madvise)
+ */
 static VALUE
 mm_s_new(argc, argv, obj)
     int argc;
@@ -579,6 +655,11 @@ mm_s_alloc(obj)
     return res;
 }
 
+/*
+ * call-seq: initialize
+ *
+ * Create a new Mmap object
+ */
 static VALUE
 mm_init(argc, argv, obj)
     VALUE obj, *argv;
@@ -853,6 +934,15 @@ mm_init(argc, argv, obj)
     return obj;
 }
 
+/*
+ * Document-method: msync
+ * Document-method: sync
+ * Document-method: flush
+ *
+ * call-seq: msync
+ *
+ * flush the file
+ */
 static VALUE
 mm_msync(argc, argv, obj)
     int argc;
@@ -876,6 +966,14 @@ mm_msync(argc, argv, obj)
     return obj;
 }
 
+/*
+ * Document-method: mprotect
+ * Document-method: protect
+ *
+ * call-seq: mprotect(mode)
+ *
+ * change the mode, value must be "r", "w" or "rw"
+ */
 static VALUE
 mm_mprotect(obj, a)
     VALUE obj, a;
@@ -920,6 +1018,17 @@ mm_mprotect(obj, a)
 }
 
 #ifdef MADV_NORMAL
+/*
+ * Document-method: madvise
+ * Document-method: advise
+ *
+ * call-seq: madvise(advice)
+ *
+ * <em>advice</em> can have the value <em>Mmap::MADV_NORMAL</em>,
+ * <em>Mmap::MADV_RANDOM</em>, <em>Mmap::MADV_SEQUENTIAL</em>,
+ * <em>Mmap::MADV_WILLNEED</em>, <em>Mmap::MADV_DONTNEED</em>
+ *
+ */
 static VALUE
 mm_madvise(obj, a)
     VALUE obj, a;
@@ -1003,6 +1112,11 @@ mm_update(str, beg, len, val)
     mm_unlock(str);
 }
 
+/*
+ * call-seq: =~(other)
+ *
+ * return an index of the match 
+ */
 static VALUE
 mm_match(x, y)
     VALUE x, y;
@@ -1141,6 +1255,13 @@ mm_sub_bang_int(bang_st)
     return res;
 }
 
+/*
+ * call-seq:
+ *    str.sub!(pattern, replacement)      => str or nil
+ *    str.sub!(pattern) {|match| block }  => str or nil
+ *
+ * substitution 
+ */
 static VALUE
 mm_sub_bang(argc, argv, obj)
     int argc;
@@ -1247,6 +1368,13 @@ mm_gsub_bang_int(bang_st)
     return obj;
 }
 
+/*
+ * call-seq:
+ *    str.gsub!(pattern, replacement)        => str or nil
+ *    str.gsub!(pattern) {|match| block }    => str or nil
+ *
+ * global substitution
+ */
 static VALUE
 mm_gsub_bang(argc, argv, obj)
     int argc;
@@ -1375,6 +1503,24 @@ mm_aset(str, indx, val)
     }
 }
 
+/*
+ * call-seq: []=(args)
+ *
+ * Element assignement - with the following syntax
+ *
+ *   self[nth] = val
+ *
+ * change the <em>nth</em> character with <em>val</em>
+ *
+ *   self[start..last] = val
+ *
+ * change substring from <em>start</em> to <em>last</em> with <em>val</em>
+ *
+ *   self[start, len] = val
+ * 
+ * replace <em>length</em> characters from <em>start</em> with <em>val</em>.
+ * 
+ */
 static VALUE
 mm_aset_m(argc, argv, str)
     int argc;
@@ -1408,6 +1554,11 @@ mm_aset_m(argc, argv, str)
 
 #if HAVE_RB_STR_INSERT
 
+/*
+ * call-seq: insert(index, str)
+ *
+ * insert <em>str</em> at <em>index</em>
+ */
 static VALUE
 mm_insert(str, idx, str2)
     VALUE str, idx, str2;
@@ -1430,6 +1581,11 @@ mm_insert(str, idx, str2)
 
 static VALUE mm_aref_m _((int, VALUE *, VALUE));
 
+/*
+ * call-seq: slice!(str)
+ *
+ * delete the specified portion of the file
+ */
 static VALUE
 mm_slice_bang(argc, argv, str)
     int argc;
@@ -1494,6 +1650,14 @@ mm_append(str1, str2)
     return str1;
 }
 
+/*
+ * Document-method: concat
+ * Document-method: <<
+ *
+ * call-seq: concat(other)
+ *
+ * append the contents of <em>other</em>
+ */
 static VALUE
 mm_concat(str1, str2)
     VALUE str1, str2;
@@ -1511,6 +1675,11 @@ mm_concat(str1, str2)
 
 #ifndef HAVE_RB_STR_LSTRIP
 
+/*
+ * call-seq: strip!
+ *
+ * removes leading and trailing whitespace
+ */
 static VALUE
 mm_strip_bang(str)
     VALUE str;
@@ -1548,6 +1717,11 @@ mm_strip_bang(str)
 
 #else
 
+/*
+ * call-seq: lstrip!
+ *
+ * removes leading whitespace
+ */
 static VALUE
 mm_lstrip_bang(str)
     VALUE str;
@@ -1576,6 +1750,11 @@ mm_lstrip_bang(str)
     return Qnil;
 }
 
+/*
+ * call-seq: rstrip!
+ *
+ * removes trailing whitespace
+ */
 static VALUE
 mm_rstrip_bang(str)
     VALUE str;
@@ -1630,6 +1809,11 @@ do {									    \
 } while (0);
  
  
+/*
+ * call-seq: <=>(other)
+ *
+ * comparison : return -1, 0, 1
+ */
 static VALUE
 mm_cmp(a, b)
     VALUE a, b;
@@ -1647,6 +1831,11 @@ mm_cmp(a, b)
 
 #if HAVE_RB_STR_CASECMP
 
+/*
+ * call-seq: casecmp(other)
+ *
+ * only with ruby >= 1.7.1
+ */
 static VALUE
 mm_casecmp(a, b)
     VALUE a, b;
@@ -1664,6 +1853,14 @@ mm_casecmp(a, b)
 
 #endif
 
+/*
+ * Document-method: ==
+ * Document-method: ===
+ *
+ * call-seq: ==
+ *
+ * comparison
+ */
 static VALUE
 mm_equal(a, b)
     VALUE a, b;
@@ -1687,6 +1884,11 @@ mm_equal(a, b)
     return result;
 }
 
+/*
+ * call-seq: eql?(other)
+ *
+ * Is this eql? to +other+ ?
+ */
 static VALUE
 mm_eql(a, b)
     VALUE a, b;
@@ -1710,6 +1912,11 @@ mm_eql(a, b)
     return result;
 }
 
+/*
+ * call-seq: hash
+ *
+ * Get the hash value
+ */
 static VALUE
 mm_hash(a)
     VALUE a;
@@ -1723,6 +1930,12 @@ mm_hash(a)
     return INT2FIX(res);
 }
 
+/*
+ * Document-method: length
+ * Document-method: size
+ *
+ * return the size of the file
+ */
 static VALUE
 mm_size(a)
     VALUE a;
@@ -1733,6 +1946,11 @@ mm_size(a)
     return UINT2NUM(i_mm->t->real);
 }
 
+/*
+ * call-seq: empty?
+ *
+ * return <em>true</em> if the file is empty
+ */
 static VALUE
 mm_empty(a)
     VALUE a;
@@ -1819,6 +2037,12 @@ mm_bang_i(obj, flag, id, argc, argv)
 
 #if HAVE_RB_STR_MATCH
 
+/*
+ * call-seq: match(pattern)
+ *
+ * convert <em>pattern</em> to a <em>Regexp</em> and then call
+ * <em>match</em> on <em>self</em>
+ */
 static VALUE
 mm_match_m(a, b)
     VALUE a, b;
@@ -1828,6 +2052,11 @@ mm_match_m(a, b)
 
 #endif
 
+/*
+ * call-seq: upcase!
+ *
+ * replaces all lowercase characters to downcase characters
+ */
 static VALUE
 mm_upcase_bang(a)
     VALUE a;
@@ -1835,6 +2064,11 @@ mm_upcase_bang(a)
     return mm_bang_i(a, MM_MODIFY, rb_intern("upcase!"), 0, 0);
 }
 
+/*
+ * call-seq: downcase!
+ *
+ * change all uppercase character to lowercase character
+ */
 static VALUE
 mm_downcase_bang(a)
     VALUE a;
@@ -1842,6 +2076,11 @@ mm_downcase_bang(a)
     return mm_bang_i(a, MM_MODIFY, rb_intern("downcase!"), 0, 0);
 }
 
+/*
+ * call-seq: capitalize!
+ *
+ * change the first character to uppercase letter
+ */
 static VALUE
 mm_capitalize_bang(a)
     VALUE a;
@@ -1849,6 +2088,11 @@ mm_capitalize_bang(a)
     return mm_bang_i(a, MM_MODIFY, rb_intern("capitalize!"), 0, 0);
 }
 
+/*
+ * call-seq: swapcase!
+ *
+ * replaces all lowercase characters to uppercase characters, and vice-versa
+ */
 static VALUE
 mm_swapcase_bang(a)
     VALUE a;
@@ -1856,6 +2100,11 @@ mm_swapcase_bang(a)
     return mm_bang_i(a, MM_MODIFY, rb_intern("swapcase!"), 0, 0);
 }
  
+/*
+ * call-seq: reverse!
+ *
+ * reverse the content of the file 
+ */
 static VALUE
 mm_reverse_bang(a)
     VALUE a;
@@ -1863,6 +2112,11 @@ mm_reverse_bang(a)
     return mm_bang_i(a, MM_MODIFY, rb_intern("reverse!"), 0, 0);
 }
 
+/*
+ * call-seq: chop!
+ *
+ * chop off the last character
+ */
 static VALUE
 mm_chop_bang(a)
     VALUE a;
@@ -1877,6 +2131,11 @@ mm_inspect(a)
     return rb_any_to_s(a);
 }
 
+/*
+ * call-seq: chomp!(rs = $/)
+ *
+ * chop off the  line ending character, specified by <em>rs</em>
+ */
 static VALUE
 mm_chomp_bang(argc, argv, obj)
     int argc;
@@ -1885,6 +2144,11 @@ mm_chomp_bang(argc, argv, obj)
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("chomp!"), argc, argv);
 }
 
+/*
+ * call-seq: delete!(str)
+ *
+ * delete every characters included in <em>str</em>
+ */
 static VALUE
 mm_delete_bang(argc, argv, obj)
     int argc;
@@ -1893,6 +2157,11 @@ mm_delete_bang(argc, argv, obj)
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("delete!"), argc, argv);
 }
 
+/*
+ * squeeze!(str)
+ *
+ * squeezes sequences of the same characters which is included in <em>str</em>
+ */
 static VALUE
 mm_squeeze_bang(argc, argv, obj)
     int argc;
@@ -1901,6 +2170,11 @@ mm_squeeze_bang(argc, argv, obj)
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("squeeze!"), argc, argv);
 }
 
+/*
+ * call-seq: tr!(search, replace)
+ *
+ * translate the character from <em>search</em> to <em>replace</em> 
+ */
 static VALUE
 mm_tr_bang(obj, a, b)
     VALUE obj, a, b;
@@ -1911,6 +2185,12 @@ mm_tr_bang(obj, a, b)
     return mm_bang_i(obj, MM_MODIFY | MM_PROTECT, rb_intern("tr!"), 2, tmp);
 }
 
+/*
+ * call-seq: tr_s!(search, replace)
+ *
+ * translate the character from <em>search</em> to <em>replace</em>, then
+ * squeeze sequence of the same characters 
+ */
 static VALUE
 mm_tr_s_bang(obj, a, b)
     VALUE obj, a, b;
@@ -1921,6 +2201,11 @@ mm_tr_s_bang(obj, a, b)
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("tr_s!"), 2, tmp);
 }
 
+/*
+ * call-seq: crypt
+ *
+ * crypt with <em>salt</em> 
+ */
 static VALUE
 mm_crypt(a, b)
     VALUE a, b;
@@ -1928,6 +2213,11 @@ mm_crypt(a, b)
     return mm_bang_i(a, MM_ORIGIN, rb_intern("crypt"), 1, &b);
 }
 
+/*
+ * call-seq: include?(other)
+ *
+ * return <em>true</em> if <em>other</em> is found
+ */
 static VALUE
 mm_include(a, b)
     VALUE a, b;
@@ -1935,6 +2225,11 @@ mm_include(a, b)
     return mm_bang_i(a, MM_ORIGIN, rb_intern("include?"), 1, &b);
 }
 
+/*
+ * call-seq: index
+ *
+ * return the index of <em>substr</em> 
+ */
 static VALUE
 mm_index(argc, argv, obj)
     int argc;
@@ -1943,6 +2238,11 @@ mm_index(argc, argv, obj)
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("index"), argc, argv);
 }
 
+/*
+ * call-seq: rindex(sibstr, pos = nil)
+ *
+ * return the index of the last occurrence of <em>substr</em>
+ */
 static VALUE
 mm_rindex(argc, argv, obj)
     int argc;
@@ -1951,6 +2251,26 @@ mm_rindex(argc, argv, obj)
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("rindex"), argc, argv);
 }
 
+/*
+ * Document-method: []
+ * Document-method: slice
+ *
+ * call-seq: [](args)
+ *
+ * Element reference - with the following syntax:
+ * 
+ *   self[nth] 
+ * 
+ * retrieve the <em>nth</em> character
+ * 
+ *   self[start..last]
+ * 
+ * return a substring from <em>start</em> to <em>last</em>
+ * 
+ *   self[start, length]
+ * 
+ * return a substring of <em>lenght</em> characters from <em>start</em> 
+ */
 static VALUE
 mm_aref_m(argc, argv, obj)
     int argc;
@@ -1959,6 +2279,11 @@ mm_aref_m(argc, argv, obj)
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("[]"), argc, argv);
 }
 
+/*
+ * call-seq: sum(bits = 16)
+ *
+ * return a checksum
+ */
 static VALUE
 mm_sum(argc, argv, obj)
     int argc;
@@ -1967,6 +2292,11 @@ mm_sum(argc, argv, obj)
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("sum"), argc, argv);
 }
 
+/*
+ * call-seq: split(sep, limit = 0)
+ *
+ * splits into a list of strings and return this array
+ */
 static VALUE
 mm_split(argc, argv, obj)
     int argc;
@@ -1975,6 +2305,11 @@ mm_split(argc, argv, obj)
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("split"), argc, argv);
 }
 
+/*
+ * call-seq: count(o1, *args)
+ *
+ * each parameter defines a set of character to count
+ */
 static VALUE
 mm_count(argc, argv, obj)
     int argc;
@@ -1990,6 +2325,11 @@ mm_internal_each(tmp)
     return rb_funcall2(tmp[0], (ID)tmp[1], (int)tmp[2], (VALUE *)tmp[3]);
 }
 
+/*
+ * call-seq: scan(pattern, &block)
+ *
+ * return an array of all occurence matched by <em>pattern</em> 
+ */
 static VALUE
 mm_scan(obj, a)
     VALUE obj, a;
@@ -2007,6 +2347,15 @@ mm_scan(obj, a)
     return obj;
 }
 
+/*
+ * Document-method: each
+ * Document-method: each_line
+ *
+ * call-seq:
+ *    each(rs = $/, &block)
+ *
+ * iterate on each line
+ */
 static VALUE
 mm_each_line(argc, argv, obj)
     int argc;
@@ -2022,6 +2371,11 @@ mm_each_line(argc, argv, obj)
     return obj;
 }
 
+/*
+ * call-seq: each_byte(&block)
+ *
+ * iterate on each byte
+ */
 static VALUE
 mm_each_byte(argc, argv, obj)
     int argc;
@@ -2045,6 +2399,16 @@ mm_undefined(argc, argv, obj)
     rb_raise(rb_eNameError, "not yet implemented");
 }
 
+/*
+ * Document-method: lockall
+ * Document-method: mlockall
+ *
+ * call-seq:
+ *  lockall(flag)
+ *
+ * disable paging of all pages mapped. <em>flag</em> can be 
+ * <em>Mmap::MCL_CURRENT</em> or <em>Mmap::MCL_FUTURE</em>
+ */
 static VALUE
 mm_mlockall(obj, flag)
     VALUE obj, flag;
@@ -2055,6 +2419,14 @@ mm_mlockall(obj, flag)
     return Qnil;
 }
 
+/*
+ * Document-method: unlockall
+ * Document-method: munlockall
+ *
+ * call-seq: unlockall
+ *
+ * reenable paging
+ */
 static VALUE
 mm_munlockall(obj)
     VALUE obj;
@@ -2065,6 +2437,14 @@ mm_munlockall(obj)
     return Qnil;
 }
 
+/*
+ * Document-method: lock
+ * Document-method: mlock
+ *
+ * call-seq: mlock
+ *
+ * disable paging
+ */
 static VALUE
 mm_mlock(obj)
     VALUE obj;
@@ -2085,6 +2465,14 @@ mm_mlock(obj)
     return obj;
 }
 
+/*
+ * Document-method: munlock
+ * Document-method: unlock
+ *
+ * call-seq: unlock
+ *
+ * reenable paging
+ */
 static VALUE
 mm_munlock(obj)
     VALUE obj;
