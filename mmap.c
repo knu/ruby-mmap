@@ -331,29 +331,15 @@ mm_str(VALUE obj, int modify)
 	if (!OBJ_TAINTED(ret) && rb_safe_level() >= 4)
 	    rb_raise(rb_eSecurityError, "Insecure: can't modify mmap");
     }
-#if HAVE_RB_DEFINE_ALLOC_FUNC
     ret = rb_obj_alloc(rb_cString);
     if (rb_obj_tainted(obj)) {
 	OBJ_TAINT(ret);
     }
-#else
-    if (rb_obj_tainted(obj)) {
-	ret = rb_tainted_str_new2("");
-    }
-    else {
-	ret = rb_str_new2("");
-    }
-    free(RSTRING(ret)->ptr);
-#endif
     RSTRING(ret)->ptr = i_mm->t->addr;
     RSTRING(ret)->len = i_mm->t->real;
     if (modify & MM_ORIGIN) {
-#if HAVE_RB_DEFINE_ALLOC_FUNC
 	RSTRING(ret)->aux.shared = ret;
 	FL_SET(ret, ELTS_SHARED);
-#else
-	RSTRING(ret)->orig = ret;
-#endif
     }
     if (i_mm->t->flag & MM_FROZEN) {
 	ret = rb_obj_freeze(ret);
@@ -1357,8 +1343,6 @@ mm_gsub_bang(int argc, VALUE *argv, VALUE obj)
 
 static VALUE mm_index __((int, VALUE *, VALUE));
 
-#if HAVE_RB_DEFINE_ALLOC_FUNC
-
 static void
 mm_subpat_set(VALUE obj, VALUE re, int offset, VALUE val)
 {
@@ -1384,8 +1368,6 @@ mm_subpat_set(VALUE obj, VALUE re, int offset, VALUE val)
     GetMmap(obj, i_mm, MM_MODIFY);
     mm_update(i_mm, start, len, val);
 }
-
-#endif
 
 static VALUE
 mm_aset(VALUE str, VALUE indx, VALUE val)
@@ -1417,16 +1399,7 @@ mm_aset(VALUE str, VALUE indx, VALUE val)
 	return val;
 
       case T_REGEXP:
-#if HAVE_RB_DEFINE_ALLOC_FUNC
 	  mm_subpat_set(str, indx, 0, val);
-#else 
-        {
-	    VALUE args[2];
-	    args[0] = indx;
-	    args[1] = val;
-	    mm_sub_bang(2, args, str);
-	}
-#endif
 	return val;
 
       case T_STRING:
@@ -1481,13 +1454,10 @@ mm_aset_m(int argc, VALUE *argv, VALUE str)
     if (argc == 3) {
 	long beg, len;
 
-#if HAVE_RB_DEFINE_ALLOC_FUNC
 	if (TYPE(argv[0]) == T_REGEXP) {
 	    mm_subpat_set(str, argv[0], NUM2INT(argv[1]), argv[2]);
 	}
-	else
-#endif
-	{
+	else {
 	    beg = NUM2INT(argv[0]);
 	    len = NUM2INT(argv[1]);
 	    mm_update(i_mm, beg, len, argv[2]);
@@ -2426,11 +2396,7 @@ Init_mmap(void)
     rb_include_module(mm_cMap, rb_mComparable);
     rb_include_module(mm_cMap, rb_mEnumerable);
 
-#if HAVE_RB_DEFINE_ALLOC_FUNC
     rb_define_alloc_func(mm_cMap, mm_s_alloc);
-#else
-    rb_define_singleton_method(mm_cMap, "allocate", mm_s_alloc, 0);
-#endif
     rb_define_singleton_method(mm_cMap, "new", mm_s_new, -1);
     rb_define_singleton_method(mm_cMap, "mlockall", mm_mlockall, 1);
     rb_define_singleton_method(mm_cMap, "lockall", mm_mlockall, 1);
