@@ -895,6 +895,17 @@ mm_init(int argc, VALUE *argv, VALUE obj)
 }
 
 /*
+ * call-seq: initialize
+ *
+ * Create a new Mmap object
+ */
+static VALUE
+mm_init_copy(VALUE obj, VALUE other)
+{
+    rb_raise(rb_eTypeError, "can't copy %s", rb_obj_classname(other));
+}
+
+/*
  * Document-method: msync
  * Document-method: sync
  * Document-method: flush
@@ -2404,6 +2415,7 @@ Init_mmap(void)
     rb_define_singleton_method(mm_cMap, "unlockall", mm_munlockall, 0);
 
     rb_define_method(mm_cMap, "initialize", mm_init, -1);
+    rb_define_method(mm_cMap, "initialize_copy", mm_init_copy, 1);
 
     rb_define_method(mm_cMap, "unmap", mm_unmap, 0);
     rb_define_method(mm_cMap, "munmap", mm_unmap, 0);
@@ -2423,9 +2435,6 @@ Init_mmap(void)
 
     rb_define_method(mm_cMap, "extend", mm_extend, 1);
     rb_define_method(mm_cMap, "freeze", mm_freeze, 0);
-    rb_define_method(mm_cMap, "clone", mm_undefined, -1);
-    rb_define_method(mm_cMap, "initialize_copy", mm_undefined, -1);
-    rb_define_method(mm_cMap, "dup", mm_undefined, -1);
     rb_define_method(mm_cMap, "<=>", mm_cmp, 1);
     rb_define_method(mm_cMap, "==", mm_equal, 1);
     rb_define_method(mm_cMap, "===", mm_equal, 1);
