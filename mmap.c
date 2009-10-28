@@ -119,8 +119,7 @@ union semun
 #endif
 
 static void
-mm_free(i_mm)
-    mm_ipc *i_mm;
+mm_free(mm_ipc *i_mm)
 {
 #if HAVE_SEMCTL && HAVE_SHMCTL
     if (i_mm->t->flag & MM_IPC) {
@@ -157,9 +156,7 @@ mm_free(i_mm)
 }
 
 static void
-mm_lock(i_mm, wait_lock)
-    mm_ipc *i_mm;
-    int wait_lock;
+mm_lock(mm_ipc *i_mm, int wait_lock)
 {
 #if HAVE_SEMCTL && HAVE_SHMCTL
     struct sembuf sem_op;
@@ -187,8 +184,7 @@ mm_lock(i_mm, wait_lock)
 }
 
 static void
-mm_unlock(i_mm)
-    mm_ipc *i_mm;
+mm_unlock(mm_ipc *i_mm)
 {
 #if HAVE_SEMCTL && HAVE_SHMCTL
     struct sembuf sem_op;
@@ -222,8 +218,7 @@ mm_unlock(i_mm)
     }
 
 static VALUE
-mm_vunlock(obj)
-    VALUE obj;
+mm_vunlock(VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -238,9 +233,7 @@ mm_vunlock(obj)
  * Create a lock
  */
 static VALUE
-mm_semlock(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_semlock(int argc, VALUE *argv, VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -270,8 +263,7 @@ mm_semlock(argc, argv, obj)
  * Get the ipc key
  */
 static VALUE
-mm_ipc_key(obj)
-    VALUE obj;
+mm_ipc_key(VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -291,8 +283,7 @@ mm_ipc_key(obj)
  * terminate the association
  */
 static VALUE
-mm_unmap(obj)
-    VALUE obj;
+mm_unmap(VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -319,8 +310,7 @@ mm_unmap(obj)
  * freeze the current file 
  */
 static VALUE
-mm_freeze(obj)
-    VALUE obj;
+mm_freeze(VALUE obj)
 {
     mm_ipc *i_mm;
     rb_obj_freeze(obj);
@@ -330,9 +320,7 @@ mm_freeze(obj)
 }
 
 static VALUE
-mm_str(obj, modify)
-    VALUE obj;
-    int modify;
+mm_str(VALUE obj, int modify)
 {
     mm_ipc *i_mm;
     VALUE ret = Qnil;
@@ -379,8 +367,7 @@ mm_str(obj, modify)
  * Convert object to a string
  */
 static VALUE
-mm_to_str(obj)
-    VALUE obj;
+mm_to_str(VALUE obj)
 {
     return mm_str(obj, MM_ORIGIN);
 }
@@ -393,8 +380,7 @@ typedef struct {
 } mm_st;
 
 static VALUE
-mm_i_expand(st_mm)
-    mm_st *st_mm;
+mm_i_expand(mm_st *st_mm)
 {
     int fd;
     mm_ipc *i_mm = st_mm->i_mm;
@@ -435,9 +421,7 @@ mm_i_expand(st_mm)
 }
 
 static void
-mm_expandf(i_mm, len)
-    mm_ipc *i_mm;
-    size_t len;
+mm_expandf(mm_ipc *i_mm, size_t len)
 {
     int status;
     mm_st st_mm;
@@ -455,7 +439,7 @@ mm_expandf(i_mm, len)
     st_mm.len = len;
     if (i_mm->t->flag & MM_IPC) {
 	mm_lock(i_mm, Qtrue);
-	rb_protect(mm_i_expand, (VALUE)&st_mm, &status);
+	rb_protect((VALUE (*)(VALUE))mm_i_expand, (VALUE)&st_mm, &status);
 	mm_unlock(i_mm);
 	if (status) {
 	    rb_jump_tag(status);
@@ -467,9 +451,7 @@ mm_expandf(i_mm, len)
 }
 
 static void
-mm_realloc(i_mm, len)
-    mm_ipc *i_mm;
-    size_t len;
+mm_realloc(mm_ipc *i_mm, size_t len)
 {
     if (i_mm->t->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len > i_mm->t->len) {
@@ -487,8 +469,7 @@ mm_realloc(i_mm, len)
  * add <em>count</em> bytes to the file (i.e. pre-extend the file) 
  */
 static VALUE
-mm_extend(obj, a)
-    VALUE obj, a;
+mm_extend(VALUE obj, VALUE a)
 {
     mm_ipc *i_mm;
     long len;
@@ -502,8 +483,7 @@ mm_extend(obj, a)
 }
 
 static VALUE
-mm_i_options(arg, obj)
-    VALUE arg, obj;
+mm_i_options(VALUE arg, VALUE obj)
 {
     mm_ipc *i_mm;
     char *options;
@@ -558,8 +538,7 @@ mm_i_options(arg, obj)
 #if HAVE_SEMCTL && HAVE_SHMCTL
 
 static VALUE
-mm_i_ipc(arg, obj)
-    VALUE arg, obj;
+mm_i_ipc(VALUE arg, VALUE obj)
 {
     mm_ipc *i_mm;
     char *options;
@@ -632,9 +611,7 @@ mm_i_ipc(arg, obj)
  *   advice:: the type of the access (see #madvise)
  */
 static VALUE
-mm_s_new(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_s_new(int argc, VALUE *argv, VALUE obj)
 {
     VALUE res = rb_funcall2(obj, rb_intern("allocate"), 0, 0);
     rb_obj_call_init(res, argc, argv);
@@ -642,8 +619,7 @@ mm_s_new(argc, argv, obj)
 }
 
 static VALUE
-mm_s_alloc(obj)
-    VALUE obj;
+mm_s_alloc(VALUE obj)
 {
     VALUE res;
     mm_ipc *i_mm;
@@ -661,9 +637,7 @@ mm_s_alloc(obj)
  * Create a new Mmap object
  */
 static VALUE
-mm_init(argc, argv, obj)
-    VALUE obj, *argv;
-    int argc;
+mm_init(int argc, VALUE *argv, VALUE obj)
 {
     struct stat st;
     int fd, smode = 0, pmode = 0, vscope, perm, init;
@@ -944,9 +918,7 @@ mm_init(argc, argv, obj)
  * flush the file
  */
 static VALUE
-mm_msync(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_msync(int argc, VALUE *argv, VALUE obj)
 {
     mm_ipc *i_mm;
     VALUE oflag;
@@ -975,8 +947,7 @@ mm_msync(argc, argv, obj)
  * change the mode, value must be "r", "w" or "rw"
  */
 static VALUE
-mm_mprotect(obj, a)
-    VALUE obj, a;
+mm_mprotect(VALUE obj, VALUE a)
 {
     mm_ipc *i_mm;
     int ret, pmode;
@@ -1030,8 +1001,7 @@ mm_mprotect(obj, a)
  *
  */
 static VALUE
-mm_madvise(obj, a)
-    VALUE obj, a;
+mm_madvise(VALUE obj, VALUE a)
 {
     mm_ipc *i_mm;
     
@@ -1059,18 +1029,14 @@ do {									   \
 } while (0);
 
 static void
-mm_update(str, beg, len, val)
-    mm_ipc *str;
-    VALUE val;
-    long beg;
-    long len;
+mm_update(mm_ipc *str, long beg, long len, VALUE val)
 {
     char *valp;
     long vall;
 
     if (str->t->flag & MM_FROZEN) rb_error_frozen("mmap");
     if (len < 0) rb_raise(rb_eIndexError, "negative length %d", len);
-    mm_lock(str);
+    mm_lock(str, Qfalse);
     if (beg < 0) {
 	beg += str->t->real;
     }
@@ -1087,7 +1053,7 @@ mm_update(str, beg, len, val)
 
     mm_unlock(str);
     StringMmap(val, valp, vall);
-    mm_lock(str);
+    mm_lock(str, Qfalse);
 
     if ((str->t->flag & MM_FIXED) && vall != len) {
 	mm_unlock(str);
@@ -1118,8 +1084,7 @@ mm_update(str, beg, len, val)
  * return an index of the match 
  */
 static VALUE
-mm_match(x, y)
-    VALUE x, y;
+mm_match(VALUE x, VALUE y)
 {
     VALUE reg, res;
     long start;
@@ -1148,8 +1113,7 @@ mm_match(x, y)
 }
 
 static VALUE
-get_pat(pat)
-    VALUE pat;
+get_pat(VALUE pat)
 {
     switch (TYPE(pat)) {
       case T_REGEXP:
@@ -1167,7 +1131,7 @@ get_pat(pat)
 }
 
 static int
-mm_correct_backref()
+mm_correct_backref(void)
 {
     VALUE match;
     int i, start;
@@ -1188,8 +1152,7 @@ mm_correct_backref()
 }
 
 static VALUE
-mm_sub_bang_int(bang_st)
-    mm_bang *bang_st;
+mm_sub_bang_int(mm_bang *bang_st)
 {
     int argc = bang_st->argc;
     VALUE *argv = bang_st->argv;
@@ -1263,10 +1226,7 @@ mm_sub_bang_int(bang_st)
  * substitution 
  */
 static VALUE
-mm_sub_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv;
-    VALUE obj;
+mm_sub_bang(int argc, VALUE *argv, VALUE obj)
 {
     VALUE res;
     mm_bang bang_st;
@@ -1287,8 +1247,7 @@ mm_sub_bang(argc, argv, obj)
 }
 
 static VALUE
-mm_gsub_bang_int(bang_st)
-    mm_bang *bang_st;
+mm_gsub_bang_int(mm_bang *bang_st)
 {
     int argc = bang_st->argc;
     VALUE *argv = bang_st->argv;
@@ -1376,10 +1335,7 @@ mm_gsub_bang_int(bang_st)
  * global substitution
  */
 static VALUE
-mm_gsub_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv;
-    VALUE obj;
+mm_gsub_bang(int argc, VALUE *argv, VALUE obj)
 {
     VALUE res;
     mm_bang bang_st;
@@ -1404,10 +1360,7 @@ static VALUE mm_index __((int, VALUE *, VALUE));
 #if HAVE_RB_DEFINE_ALLOC_FUNC
 
 static void
-mm_subpat_set(obj, re, offset, val)
-    VALUE obj, re;
-    int offset;
-    VALUE val;
+mm_subpat_set(VALUE obj, VALUE re, int offset, VALUE val)
 {
     VALUE str, match;
     int start, end, len;
@@ -1435,9 +1388,7 @@ mm_subpat_set(obj, re, offset, val)
 #endif
 
 static VALUE
-mm_aset(str, indx, val)
-    VALUE str;
-    VALUE indx, val;
+mm_aset(VALUE str, VALUE indx, VALUE val)
 {
     long idx;
     mm_ipc *i_mm;
@@ -1522,10 +1473,7 @@ mm_aset(str, indx, val)
  * 
  */
 static VALUE
-mm_aset_m(argc, argv, str)
-    int argc;
-    VALUE *argv;
-    VALUE str;
+mm_aset_m(int argc, VALUE *argv, VALUE str)
 {
     mm_ipc *i_mm;
 
@@ -1560,8 +1508,7 @@ mm_aset_m(argc, argv, str)
  * insert <em>str</em> at <em>index</em>
  */
 static VALUE
-mm_insert(str, idx, str2)
-    VALUE str, idx, str2;
+mm_insert(VALUE str, VALUE idx, VALUE str2)
 {
     mm_ipc *i_mm;
     long pos = NUM2LONG(idx);
@@ -1579,7 +1526,7 @@ mm_insert(str, idx, str2)
 
 #endif
 
-static VALUE mm_aref_m _((int, VALUE *, VALUE));
+static VALUE mm_aref_m(int, VALUE *, VALUE);
 
 /*
  * call-seq: slice!(str)
@@ -1587,10 +1534,7 @@ static VALUE mm_aref_m _((int, VALUE *, VALUE));
  * delete the specified portion of the file
  */
 static VALUE
-mm_slice_bang(argc, argv, str)
-    int argc;
-    VALUE *argv;
-    VALUE str;
+mm_slice_bang(int argc, VALUE *argv, VALUE str)
 {
     VALUE result;
     VALUE buf[3];
@@ -1611,10 +1555,7 @@ mm_slice_bang(argc, argv, str)
 }
 
 static VALUE
-mm_cat(str, ptr, len)
-    VALUE str;
-    const char *ptr;
-    long len;
+mm_cat(VALUE str, const char *ptr, long len)
 {
     mm_ipc *i_mm;
     char *sptr;
@@ -1642,8 +1583,7 @@ mm_cat(str, ptr, len)
 }
 
 static VALUE
-mm_append(str1, str2)
-    VALUE str1, str2;
+mm_append(VALUE str1, VALUE str2)
 {
     str2 = rb_str_to_str(str2);
     str1 = mm_cat(str1, StringValuePtr(str2), RSTRING(str2)->len);
@@ -1659,8 +1599,7 @@ mm_append(str1, str2)
  * append the contents of <em>other</em>
  */
 static VALUE
-mm_concat(str1, str2)
-    VALUE str1, str2;
+mm_concat(VALUE str1, VALUE str2)
 {
     if (FIXNUM_P(str2)) {
 	int i = FIX2INT(str2);
@@ -1681,8 +1620,7 @@ mm_concat(str1, str2)
  * removes leading and trailing whitespace
  */
 static VALUE
-mm_strip_bang(str)
-    VALUE str;
+mm_strip_bang(VALUE str)
 {
     char *s, *t, *e;
     mm_ipc *i_mm;
@@ -1723,8 +1661,7 @@ mm_strip_bang(str)
  * removes leading whitespace
  */
 static VALUE
-mm_lstrip_bang(str)
-    VALUE str;
+mm_lstrip_bang(VALUE str)
 {
     char *s, *t, *e;
     mm_ipc *i_mm;
@@ -1756,8 +1693,7 @@ mm_lstrip_bang(str)
  * removes trailing whitespace
  */
 static VALUE
-mm_rstrip_bang(str)
-    VALUE str;
+mm_rstrip_bang(VALUE str)
 {
     char *s, *t, *e;
     mm_ipc *i_mm;
@@ -1784,8 +1720,7 @@ mm_rstrip_bang(str)
 }
 
 static VALUE
-mm_strip_bang(str)
-    VALUE str;
+mm_strip_bang(VALUE str)
 {
     VALUE l = mm_lstrip_bang(str);
     VALUE r = mm_rstrip_bang(str);
@@ -1815,8 +1750,7 @@ do {									    \
  * comparison : return -1, 0, 1
  */
 static VALUE
-mm_cmp(a, b)
-    VALUE a, b;
+mm_cmp(VALUE a, VALUE b)
 {
     int result;
     int recycle = 0;
@@ -1837,8 +1771,7 @@ mm_cmp(a, b)
  * only with ruby >= 1.7.1
  */
 static VALUE
-mm_casecmp(a, b)
-    VALUE a, b;
+mm_casecmp(VALUE a, VALUE b)
 {
     VALUE result;
     int recycle = 0;
@@ -1862,8 +1795,7 @@ mm_casecmp(a, b)
  * comparison
  */
 static VALUE
-mm_equal(a, b)
-    VALUE a, b;
+mm_equal(VALUE a, VALUE b)
 {
     VALUE result;
     mm_ipc *i_mm, *u_mm;
@@ -1890,8 +1822,7 @@ mm_equal(a, b)
  * Is this eql? to +other+ ?
  */
 static VALUE
-mm_eql(a, b)
-    VALUE a, b;
+mm_eql(VALUE a, VALUE b)
 {
     VALUE result;
     mm_ipc *i_mm, *u_mm;
@@ -1918,8 +1849,7 @@ mm_eql(a, b)
  * Get the hash value
  */
 static VALUE
-mm_hash(a)
-    VALUE a;
+mm_hash(VALUE a)
 {
     VALUE b;
     int res;
@@ -1937,8 +1867,7 @@ mm_hash(a)
  * return the size of the file
  */
 static VALUE
-mm_size(a)
-    VALUE a;
+mm_size(VALUE a)
 {
     mm_ipc *i_mm;
 
@@ -1952,8 +1881,7 @@ mm_size(a)
  * return <em>true</em> if the file is empty
  */
 static VALUE
-mm_empty(a)
-    VALUE a;
+mm_empty(VALUE a)
 {
     mm_ipc *i_mm;
 
@@ -1963,23 +1891,20 @@ mm_empty(a)
 }
 
 static VALUE
-mm_protect_bang(t)
-    VALUE *t;
+mm_protect_bang(VALUE *t)
 {
     return rb_funcall2(t[0], (ID)t[1], (int)t[2], (VALUE *)t[3]);
 }
 
 static VALUE
-mm_recycle(str)
-    VALUE str;
+mm_recycle(VALUE str)
 {
     rb_gc_force_recycle(str);
     return str;
 }
 
 static VALUE
-mm_i_bang(bang_st)
-    mm_bang *bang_st;
+mm_i_bang(mm_bang *bang_st)
 {
     VALUE str, res;
     mm_ipc *i_mm;
@@ -2006,9 +1931,7 @@ mm_i_bang(bang_st)
 
 
 static VALUE
-mm_bang_i(obj, flag, id, argc, argv)
-    VALUE obj, *argv;
-    int flag, id, argc;
+mm_bang_i(VALUE obj, int flag, int id, int argc, VALUE *argv)
 {
     VALUE res;
     mm_ipc *i_mm;
@@ -2044,8 +1967,7 @@ mm_bang_i(obj, flag, id, argc, argv)
  * <em>match</em> on <em>self</em>
  */
 static VALUE
-mm_match_m(a, b)
-    VALUE a, b;
+mm_match_m(VALUE a, VALUE b)
 {
     return mm_bang_i(a, MM_ORIGIN, rb_intern("match"), 1, &b);
 }
@@ -2058,8 +1980,7 @@ mm_match_m(a, b)
  * replaces all lowercase characters to downcase characters
  */
 static VALUE
-mm_upcase_bang(a)
-    VALUE a;
+mm_upcase_bang(VALUE a)
 {
     return mm_bang_i(a, MM_MODIFY, rb_intern("upcase!"), 0, 0);
 }
@@ -2070,8 +1991,7 @@ mm_upcase_bang(a)
  * change all uppercase character to lowercase character
  */
 static VALUE
-mm_downcase_bang(a)
-    VALUE a;
+mm_downcase_bang(VALUE a)
 {
     return mm_bang_i(a, MM_MODIFY, rb_intern("downcase!"), 0, 0);
 }
@@ -2082,8 +2002,7 @@ mm_downcase_bang(a)
  * change the first character to uppercase letter
  */
 static VALUE
-mm_capitalize_bang(a)
-    VALUE a;
+mm_capitalize_bang(VALUE a)
 {
     return mm_bang_i(a, MM_MODIFY, rb_intern("capitalize!"), 0, 0);
 }
@@ -2094,8 +2013,7 @@ mm_capitalize_bang(a)
  * replaces all lowercase characters to uppercase characters, and vice-versa
  */
 static VALUE
-mm_swapcase_bang(a)
-    VALUE a;
+mm_swapcase_bang(VALUE a)
 {
     return mm_bang_i(a, MM_MODIFY, rb_intern("swapcase!"), 0, 0);
 }
@@ -2106,8 +2024,7 @@ mm_swapcase_bang(a)
  * reverse the content of the file 
  */
 static VALUE
-mm_reverse_bang(a)
-    VALUE a;
+mm_reverse_bang(VALUE a)
 {
     return mm_bang_i(a, MM_MODIFY, rb_intern("reverse!"), 0, 0);
 }
@@ -2118,15 +2035,13 @@ mm_reverse_bang(a)
  * chop off the last character
  */
 static VALUE
-mm_chop_bang(a)
-    VALUE a;
+mm_chop_bang(VALUE a)
 {
     return mm_bang_i(a, MM_CHANGE, rb_intern("chop!"), 0, 0);
 }
 
 static VALUE
-mm_inspect(a)
-    VALUE a;
+mm_inspect(VALUE a)
 {
     return rb_any_to_s(a);
 }
@@ -2137,9 +2052,7 @@ mm_inspect(a)
  * chop off the  line ending character, specified by <em>rs</em>
  */
 static VALUE
-mm_chomp_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_chomp_bang(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("chomp!"), argc, argv);
 }
@@ -2150,9 +2063,7 @@ mm_chomp_bang(argc, argv, obj)
  * delete every characters included in <em>str</em>
  */
 static VALUE
-mm_delete_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_delete_bang(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("delete!"), argc, argv);
 }
@@ -2163,9 +2074,7 @@ mm_delete_bang(argc, argv, obj)
  * squeezes sequences of the same characters which is included in <em>str</em>
  */
 static VALUE
-mm_squeeze_bang(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_squeeze_bang(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_CHANGE | MM_PROTECT, rb_intern("squeeze!"), argc, argv);
 }
@@ -2176,8 +2085,7 @@ mm_squeeze_bang(argc, argv, obj)
  * translate the character from <em>search</em> to <em>replace</em> 
  */
 static VALUE
-mm_tr_bang(obj, a, b)
-    VALUE obj, a, b;
+mm_tr_bang(VALUE obj, VALUE a, VALUE b)
 {
     VALUE tmp[2];
     tmp[0] = a;
@@ -2192,8 +2100,7 @@ mm_tr_bang(obj, a, b)
  * squeeze sequence of the same characters 
  */
 static VALUE
-mm_tr_s_bang(obj, a, b)
-    VALUE obj, a, b;
+mm_tr_s_bang(VALUE obj, VALUE a, VALUE b)
 {
     VALUE tmp[2];
     tmp[0] = a;
@@ -2207,8 +2114,7 @@ mm_tr_s_bang(obj, a, b)
  * crypt with <em>salt</em> 
  */
 static VALUE
-mm_crypt(a, b)
-    VALUE a, b;
+mm_crypt(VALUE a, VALUE b)
 {
     return mm_bang_i(a, MM_ORIGIN, rb_intern("crypt"), 1, &b);
 }
@@ -2219,8 +2125,7 @@ mm_crypt(a, b)
  * return <em>true</em> if <em>other</em> is found
  */
 static VALUE
-mm_include(a, b)
-    VALUE a, b;
+mm_include(VALUE a, VALUE b)
 {
     return mm_bang_i(a, MM_ORIGIN, rb_intern("include?"), 1, &b);
 }
@@ -2231,9 +2136,7 @@ mm_include(a, b)
  * return the index of <em>substr</em> 
  */
 static VALUE
-mm_index(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_index(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("index"), argc, argv);
 }
@@ -2244,9 +2147,7 @@ mm_index(argc, argv, obj)
  * return the index of the last occurrence of <em>substr</em>
  */
 static VALUE
-mm_rindex(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_rindex(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("rindex"), argc, argv);
 }
@@ -2272,9 +2173,7 @@ mm_rindex(argc, argv, obj)
  * return a substring of <em>lenght</em> characters from <em>start</em> 
  */
 static VALUE
-mm_aref_m(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_aref_m(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("[]"), argc, argv);
 }
@@ -2285,9 +2184,7 @@ mm_aref_m(argc, argv, obj)
  * return a checksum
  */
 static VALUE
-mm_sum(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_sum(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("sum"), argc, argv);
 }
@@ -2298,9 +2195,7 @@ mm_sum(argc, argv, obj)
  * splits into a list of strings and return this array
  */
 static VALUE
-mm_split(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_split(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("split"), argc, argv);
 }
@@ -2311,17 +2206,15 @@ mm_split(argc, argv, obj)
  * each parameter defines a set of character to count
  */
 static VALUE
-mm_count(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_count(int argc, VALUE *argv, VALUE obj)
 {
     return mm_bang_i(obj, MM_ORIGIN, rb_intern("count"), argc, argv);
 }
 
 static VALUE
-mm_internal_each(tmp)
-    VALUE *tmp;
+mm_internal_each(VALUE arg)
 {
+    VALUE *tmp = (VALUE *)arg;
     return rb_funcall2(tmp[0], (ID)tmp[1], (int)tmp[2], (VALUE *)tmp[3]);
 }
 
@@ -2331,8 +2224,7 @@ mm_internal_each(tmp)
  * return an array of all occurence matched by <em>pattern</em> 
  */
 static VALUE
-mm_scan(obj, a)
-    VALUE obj, a;
+mm_scan(VALUE obj, VALUE a)
 {
     VALUE tmp[4];
 
@@ -2357,9 +2249,7 @@ mm_scan(obj, a)
  * iterate on each line
  */
 static VALUE
-mm_each_line(argc, argv, obj)
-    int argc;
-    VALUE obj, *argv;
+mm_each_line(int argc, VALUE *argv, VALUE obj)
 {
     VALUE tmp[4];
 
@@ -2377,9 +2267,7 @@ mm_each_line(argc, argv, obj)
  * iterate on each byte
  */
 static VALUE
-mm_each_byte(argc, argv, obj)
-    int argc;
-    VALUE obj, *argv;
+mm_each_byte(int argc, VALUE *argv, VALUE obj)
 {
     VALUE tmp[4];
 
@@ -2392,9 +2280,7 @@ mm_each_byte(argc, argv, obj)
 }
 
 static VALUE
-mm_undefined(argc, argv, obj)
-    int argc;
-    VALUE *argv, obj;
+mm_undefined(int argc, VALUE *argv, VALUE obj)
 {
     rb_raise(rb_eNameError, "not yet implemented");
 }
@@ -2410,8 +2296,7 @@ mm_undefined(argc, argv, obj)
  * <em>Mmap::MCL_CURRENT</em> or <em>Mmap::MCL_FUTURE</em>
  */
 static VALUE
-mm_mlockall(obj, flag)
-    VALUE obj, flag;
+mm_mlockall(VALUE obj, VALUE flag)
 {
     if (mlockall(NUM2INT(flag)) == -1) {
 	rb_raise(rb_eArgError, "mlockall(%d)", errno);
@@ -2428,8 +2313,7 @@ mm_mlockall(obj, flag)
  * reenable paging
  */
 static VALUE
-mm_munlockall(obj)
-    VALUE obj;
+mm_munlockall(VALUE obj)
 {
     if (munlockall() == -1) {
 	rb_raise(rb_eArgError, "munlockall(%d)", errno);
@@ -2446,8 +2330,7 @@ mm_munlockall(obj)
  * disable paging
  */
 static VALUE
-mm_mlock(obj)
-    VALUE obj;
+mm_mlock(VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -2474,8 +2357,7 @@ mm_mlock(obj)
  * reenable paging
  */
 static VALUE
-mm_munlock(obj)
-    VALUE obj;
+mm_munlock(VALUE obj)
 {
     mm_ipc *i_mm;
 
@@ -2491,7 +2373,7 @@ mm_munlock(obj)
 }
 
 void
-Init_mmap()
+Init_mmap(void)
 {
     if (rb_const_defined_at(rb_cObject, rb_intern("Mmap"))) {
 	rb_raise(rb_eNameError, "class already defined");
