@@ -16,20 +16,6 @@
 #include <intern.h>
 #include <re.h>
 
-#ifndef StringValue
-#define StringValue(x) do { 				\
-    if (TYPE(x) != T_STRING) x = rb_str_to_str(x); 	\
-} while (0)
-#endif
-
-#ifndef StringValuePtr
-#define StringValuePtr(x) STR2CSTR(x)
-#endif
-
-#ifndef SafeStringValue
-#define SafeStringValue(x) Check_SafeStr(x)
-#endif
-
 #ifndef MADV_NORMAL
 #ifdef POSIX_MADV_NORMAL
 #define MADV_NORMAL     POSIX_MADV_NORMAL 
@@ -1481,8 +1467,6 @@ mm_aset_m(int argc, VALUE *argv, VALUE str)
     return mm_aset(str, argv[0], argv[1]);
 }
 
-#if HAVE_RB_STR_INSERT
-
 /*
  * call-seq: insert(index, str)
  *
@@ -1504,8 +1488,6 @@ mm_insert(VALUE str, VALUE idx, VALUE str2)
     mm_update(i_mm, pos, 0, str2);
     return str;
 }
-
-#endif
 
 static VALUE mm_aref_m(int, VALUE *, VALUE);
 
@@ -1593,49 +1575,6 @@ mm_concat(VALUE str1, VALUE str2)
     return str1;
 }
 
-#ifndef HAVE_RB_STR_LSTRIP
-
-/*
- * call-seq: strip!
- *
- * removes leading and trailing whitespace
- */
-static VALUE
-mm_strip_bang(VALUE str)
-{
-    char *s, *t, *e;
-    mm_ipc *i_mm;
-
-    GetMmap(str, i_mm, MM_MODIFY);
-    mm_lock(i_mm, Qtrue);
-    s = (char *)i_mm->t->addr;
-    e = t = s + i_mm->t->real;
-    while (s < t && ISSPACE(*s)) s++;
-    t--;
-    while (s <= t && ISSPACE(*t)) t--;
-    t++;
-
-    if (i_mm->t->real != (t - s) && (i_mm->t->flag & MM_FIXED)) {
-	mm_unlock(i_mm);
-        rb_raise(rb_eTypeError, "try to change the size of a fixed map");
-    }
-    i_mm->t->real = t-s;
-    if (s > (char *)i_mm->t->addr) { 
-        memmove(i_mm->t->addr, s, i_mm->t->real);
-        ((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
-    }
-    else if (t < e) {
-        ((char *)i_mm->t->addr)[i_mm->t->real] = '\0';
-    }
-    else {
-        str = Qnil;
-    }
-    mm_unlock(i_mm);
-    return str;
-}
-
-#else
-
 /*
  * call-seq: lstrip!
  *
@@ -1710,8 +1649,6 @@ mm_strip_bang(VALUE str)
     return str;
 }
 
-#endif
-
 #define MmapStr(b, recycle)						    \
 do {									    \
     recycle = 0;							    \
@@ -1744,8 +1681,6 @@ mm_cmp(VALUE a, VALUE b)
     return INT2FIX(result);
 }
 
-#if HAVE_RB_STR_CASECMP
-
 /*
  * call-seq: casecmp(other)
  *
@@ -1764,8 +1699,6 @@ mm_casecmp(VALUE a, VALUE b)
     if (recycle) rb_gc_force_recycle(b);
     return result;
 }
-
-#endif
 
 /*
  * Document-method: ==
@@ -1939,8 +1872,6 @@ mm_bang_i(VALUE obj, int flag, int id, int argc, VALUE *argv)
 
 }
 
-#if HAVE_RB_STR_MATCH
-
 /*
  * call-seq: match(pattern)
  *
@@ -1952,8 +1883,6 @@ mm_match_m(VALUE a, VALUE b)
 {
     return mm_bang_i(a, MM_ORIGIN, rb_intern("match"), 1, &b);
 }
-
-#endif
 
 /*
  * call-seq: upcase!
@@ -2440,25 +2369,19 @@ Init_mmap(void)
     rb_define_method(mm_cMap, "===", mm_equal, 1);
     rb_define_method(mm_cMap, "eql?", mm_eql, 1);
     rb_define_method(mm_cMap, "hash", mm_hash, 0);
-#if HAVE_RB_STR_CASECMP
     rb_define_method(mm_cMap, "casecmp", mm_casecmp, 1);
-#endif
     rb_define_method(mm_cMap, "+", mm_undefined, -1);
     rb_define_method(mm_cMap, "*", mm_undefined, -1);
     rb_define_method(mm_cMap, "%", mm_undefined, -1);
     rb_define_method(mm_cMap, "[]", mm_aref_m, -1);
     rb_define_method(mm_cMap, "[]=", mm_aset_m, -1);
-#if HAVE_RB_STR_INSERT
     rb_define_method(mm_cMap, "insert", mm_insert, 2);
-#endif
     rb_define_method(mm_cMap, "length", mm_size, 0);
     rb_define_method(mm_cMap, "size", mm_size, 0);
     rb_define_method(mm_cMap, "empty?", mm_empty, 0);
     rb_define_method(mm_cMap, "=~", mm_match, 1);
     rb_define_method(mm_cMap, "~", mm_undefined, -1);
-#if HAVE_RB_STR_MATCH
     rb_define_method(mm_cMap, "match", mm_match_m, 1);
-#endif
     rb_define_method(mm_cMap, "succ", mm_undefined, -1);
     rb_define_method(mm_cMap, "succ!", mm_undefined, -1);
     rb_define_method(mm_cMap, "next", mm_undefined, -1);
@@ -2509,18 +2432,14 @@ Init_mmap(void)
     rb_define_method(mm_cMap, "chop", mm_undefined, -1);
     rb_define_method(mm_cMap, "chomp", mm_undefined, -1);
     rb_define_method(mm_cMap, "strip", mm_undefined, -1);
-#if HAVE_RB_STR_LSTRIP
     rb_define_method(mm_cMap, "lstrip", mm_undefined, -1);
     rb_define_method(mm_cMap, "rstrip", mm_undefined, -1);
-#endif
 
     rb_define_method(mm_cMap, "sub!", mm_sub_bang, -1);
     rb_define_method(mm_cMap, "gsub!", mm_gsub_bang, -1);
     rb_define_method(mm_cMap, "strip!", mm_strip_bang, 0);
-#if HAVE_RB_STR_LSTRIP
     rb_define_method(mm_cMap, "lstrip!", mm_lstrip_bang, 0);
     rb_define_method(mm_cMap, "rstrip!", mm_rstrip_bang, 0);
-#endif
     rb_define_method(mm_cMap, "chop!", mm_chop_bang, 0);
     rb_define_method(mm_cMap, "chomp!", mm_chomp_bang, -1);
 
