@@ -1146,6 +1146,7 @@ mm_sub_bang_int(mm_bang *bang_st)
     int tainted = 0;
     long plen;
     mm_ipc *i_mm;
+    char *ptr;
 
     if (argc == 1 && rb_block_given_p()) {
 	iter = 1;
@@ -1182,16 +1183,16 @@ mm_sub_bang_int(mm_bang *bang_st)
 	    mm_realloc(i_mm, RSTRING(str)->len + RSTRING(repl)->len - plen);
 	    RSTRING(str)->ptr = i_mm->t->addr;
 	}
+	ptr = RSTRING(str)->ptr + start + BEG(0);
 	if (RSTRING(repl)->len != plen) {
 	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(repl)->len,
-		    RSTRING(str)->ptr + start + BEG(0) + plen,
+	    memmove(ptr + RSTRING(repl)->len,
+		    ptr + plen,
 		    RSTRING(str)->len - start - BEG(0) - plen);
 	}
-	memcpy(RSTRING(str)->ptr + start + BEG(0),
-	       RSTRING(repl)->ptr, RSTRING(repl)->len);
+	memcpy(ptr, RSTRING(repl)->ptr, RSTRING(repl)->len);
 	i_mm->t->real += RSTRING(repl)->len - plen;
 	if (tainted) OBJ_TAINT(obj);
 
@@ -1242,6 +1243,7 @@ mm_gsub_bang_int(mm_bang *bang_st)
     int tainted = 0;
     long plen;
     mm_ipc *i_mm;
+    char *ptr;
 
     if (argc == 1 && rb_block_given_p()) {
 	iter = 1;
@@ -1282,16 +1284,16 @@ mm_gsub_bang_int(mm_bang *bang_st)
 	if ((i_mm->t->real + RSTRING(val)->len - plen) > i_mm->t->len) {
 	    mm_realloc(i_mm, RSTRING(str)->len + RSTRING(val)->len - plen);
 	}
+	ptr = RSTRING_PTR(str) + start + BEG(0);
 	if (RSTRING(val)->len != plen) {
 	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(RSTRING(str)->ptr + start + BEG(0) + RSTRING(val)->len,
-		    RSTRING(str)->ptr + start + BEG(0) + plen,
+	    memmove(ptr + RSTRING(val)->len,
+		    ptr + plen,
 		    RSTRING(str)->len - start - BEG(0) - plen);
 	}
-	memcpy(RSTRING(str)->ptr + start + BEG(0),
-	       RSTRING(val)->ptr, RSTRING(val)->len);
+	memcpy(ptr, RSTRING(val)->ptr, RSTRING(val)->len);
 	RSTRING(str)->len += RSTRING(val)->len - plen;
 	i_mm->t->real = RSTRING(str)->len;
 	if (BEG(0) == END(0)) {
